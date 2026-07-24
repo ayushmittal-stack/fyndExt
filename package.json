@@ -1,0 +1,37 @@
+{
+  "name": "groot",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "start": "npm run start:dev",
+    "start:dev": "nodemon index.js",
+    "start:prod": "NODE_ENV=production node index.js",
+    "test": "jest --config jest.config.js --no-cache --detectOpenHandles --json --outputFile=./coverage/coverage.json"
+  },
+  "nodemonConfig": {
+    "ignore": [
+      "frontend/**"
+    ]
+  },
+  "dependencies": {
+    "@gofynd/fdk-client-javascript": "^3.4.2",
+    "@gofynd/fdk-extension-javascript": "^1.1.4",
+    "axios": "^1.7.2",
+    "body-parser": "^1.20.2",
+    "cookie-parser": "^1.4.6",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "serve-static": "^1.15.0",
+    "sqlite3": "^5.1.7"
+  },
+  "devDependencies": {
+    "axios-mock-adapter": "^1.21.2",
+    "concurrently": "^8.2.2",
+    "jest": "^29.7.0",
+    "nodemon": "^3.1.4",
+    "supertest": "^6.3.0"
+  },
+  "engines": {
+    "node": ">=16.x"
+  }
+}
