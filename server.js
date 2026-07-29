@@ -176,7 +176,41 @@ app.post("/api/webhook/shipment", async (req, res) => {
 
     // console.log(response.data);
 
-    const erpPayload = [{}];
+    const erpPayload = [
+      {
+        COMPANY_CODE: "VIVA Radix",
+        SOURCE_ERP: "Fynd.com",
+        SUPPLIER_COUNTRY_CODE_ENGLISH: "SA",
+        COMPANY_ROLE: "S",
+        INVOICE_TYPE: "Simplified Tax Invoice", // need to confirm -- B2C for now
+        INVOICE_SUBTYPE: "Regular Domestic Supply",
+        TEMPLATE_CODE: "SIMPLIFIED CN", // need to confirm -- for order creation IN , return - CN
+        TRAN_BRANCH: shipment.fulfilling_store?.code,
+        TRAN_SERVICE_BRANCH: shipment.fulfilling_store?.code,
+        ERP_TRANSACTION_REF: shipmentId, // in doc its source is mentioned as fynd order id and value as shipment id
+        TRAN_DOC_TYPE: "IN",
+        TRAN_DOC_NO: shipmentId,
+        TRAN_DOC_DATE: shipment.order.created_ts?.split("T")[0], // timezone?
+        TRAN_LINE_NO: shipment.bags[0]?.line_number,
+        DATE_OF_SUPPLY: shipment.order.created_ts?.split("T")[0], // timezone?
+        PRODUCT_CODE: shipment.bags[0]?.article?.seller_identifier, // (seller_identifier)which one to use? from articles or delivery charges breakup ---- use articles one
+        INV_CURRENCY_CODE: "SAR",
+        VAT_CURRENCY_CODE: "SAR",
+        TRAN_QUANTITY: shipment.bags[0]?.quantity,
+        TRAN_UNIT_PRICE:
+          shipment.bags[0]?.financial_breakup[0]?.price_effective,
+        TRAN_TAX_CODE_CATEGORY: "S", // need to confirm
+        TRAN_GROSS_AMOUNT:
+          shipment.bags[0]?.quantity *
+          shipment.bags[0]?.financial_breakup[0]?.price_effective, // TRAN_UNIT_PRICE * TRAN_QUANTITY
+        TRAN_NET_AMOUNT: shipment.bags[0]?.financial_breakup[0]?.value_of_good,
+        TRAN_TAX_RATE:
+          shipment.bags[0]?.financial_breakup[0]?.gst_tax_percentage,
+        TRAN_TAX_AMOUNT: shipment.bags[0]?.financial_breakup[0]?.gst_fee,
+        TRAN_NET_PLUS_TAX: shipment.bags[0]?.financial_breakup[0]?.amount_paid,
+        INV_CUSTOMER_AMOUNT_DUE: 0,
+      },
+    ];
     const timestamp = new Date().getTime();
     const invoice_payload = {
       force_transition: true,
