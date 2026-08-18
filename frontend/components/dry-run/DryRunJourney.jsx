@@ -9,6 +9,7 @@ import React, {
 
 import {
   getDryRunJourney,
+  getDryRunPodCurl,
   getDryRunRequestBlob,
   listDryRunFailures,
   listDryRuns,
@@ -33,6 +34,31 @@ function errorCopy(kind) {
 function detailIdentity(value) {
   if (!value) return null;
   return `${value.job.jobId}:${value.steps.payloadPreparation.requestHash}`;
+}
+
+function canCopyPodCurl(value) {
+  return value?.mode === 'dry-run'
+    && value.job?.state === 'SUBMISSION_HELD'
+    && value.steps?.fyndLock?.status === 'completed'
+    && value.steps.fyndLock.result?.locked === true
+    && value.steps?.oeisSubmission?.status === 'held';
+}
+
+function posixSingleQuote(value) {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
+function buildPodCurl(envelope) {
+  return [
+    `printf '%s' ${posixSingleQuote(envelope.requestJson)} | curl --disable --silent --show-error --max-redirs 0 \\`,
+    `  --request ${envelope.method} \\`,
+    `  --noproxy ${posixSingleQuote('*')} \\`,
+    `  --url ${posixSingleQuote(envelope.url)} \\`,
+    `  --header ${posixSingleQuote(`Authorization: APIkey ${envelope.apiKey}`)} \\`,
+    `  --header ${posixSingleQuote('Connection: keep-alive')} \\`,
+    `  --header ${posixSingleQuote('Content-Type: application/json')} \\`,
+    '  --data-binary @-',
+  ].join('\n');
 }
 
 function mergeFailuresDescending(current, refreshed) {
@@ -77,6 +103,7 @@ export const DryRunJourney = forwardRef(function DryRunJourney(
   const [error, setError] = useState(null);
   const [missingSelection, setMissingSelection] = useState(false);
   const [feedback, setFeedback] = useState(EMPTY_FEEDBACK);
+  const [copyingPodCurl, setCopyingPodCurl] = useState(false);
   const [failures, setFailures] = useState([]);
   const [failureLoading, setFailureLoading] = useState(true);
   const [failureError, setFailureError] = useState(null);
@@ -112,6 +139,9 @@ export const DryRunJourney = forwardRef(function DryRunJourney(
   const runExtensionRefreshRef = useRef(null);
   const selectionGenerationRef = useRef(0);
   const detailIdentityRef = useRef(null);
+  const podCurlEligibleRef = useRef(false);
+  const podCurlActionRef = useRef(0);
+  const podCurlInFlightRef = useRef(false);
   const blobCacheRef = useRef(new Map());
   const objectUrlsRef = useRef(new Map());
 
@@ -176,6 +206,25 @@ export const DryRunJourney = forwardRef(function DryRunJourney(
     }));
   }, []);
 
+  const cancelPodCurlAction = useCallback(() => {
+    podCurlActionRef.current += 1;
+    podCurlInFlightRef.current = false;
+    if (mountedRef.current) setCopyingPodCurl(false);
+  }, []);
+
+  const clearMissingSelection = useCallback(() => {
+    suppressAutoSelectRef.current = true;
+    cancelPodCurlAction();
+    selectionGenerationRef.current += 1;
+    selectedRef.current = null;
+    detailIdentityRef.current = null;
+    podCurlEligibleRef.current = false;
+    setSelectedJobId(null);
+    setDetail(null);
+    setFeedback(EMPTY_FEEDBACK);
+    setMissingSelection(true);
+  }, [cancelPodCurlAction]);
+
   const revokeObjectUrl = useCallback(url => {
     if (!objectUrlsRef.current.has(url)) return;
     const timerId = objectUrlsRef.current.get(url);
@@ -187,6 +236,7 @@ export const DryRunJourney = forwardRef(function DryRunJourney(
   const stopForUnauthorized = useCallback((sessionId, { notifyParent = true } = {}) => {
     if (!mountedRef.current || sessionId !== sessionRef.current || stoppedRef.current) return;
     stoppedRef.current = true;
+    cancelPodCurlAction();
     refreshInFlightRef.current = false;
     if (pollTimerRef.current !== null) {
       window.clearInterval(pollTimerRef.current);
@@ -210,6 +260,7 @@ export const DryRunJourney = forwardRef(function DryRunJourney(
     selectionGenerationRef.current += 1;
     selectedRef.current = null;
     detailIdentityRef.current = null;
+    podCurlEligibleRef.current = false;
     setJobs([]);
     setSelectedJobId(null);
     setDetail(null);
@@ -217,6 +268,7 @@ export const DryRunJourney = forwardRef(function DryRunJourney(
     setDetailLoading(false);
     setMissingSelection(false);
     setFeedback(EMPTY_FEEDBACK);
+    setCopyingPodCurl(false);
     setFailures([]);
     setFailureLoading(false);
     setFailureError(null);
@@ -235,7 +287,7 @@ export const DryRunJourney = forwardRef(function DryRunJourney(
     objectUrlsRef.current.clear();
     blobCacheRef.current.clear();
     if (notifyParent) onSessionUnauthorized?.(routeKey);
-  }, [onSessionUnauthorized, routeKey]);
+  }, [cancelPodCurlAction, onSessionUnauthorized, routeKey]);
 
   const loadDetail = useCallback(async (jobId, { replacePending = false } = {}) => {
     if (!jobId || stoppedRef.current) {
@@ -254,8 +306,14 @@ export const DryRunJourney = forwardRef(function DryRunJourney(
         return { status: 'stale' };
       }
       const nextIdentity = detailIdentity(nextDetail);
-      if (detailIdentityRef.current !== nextIdentity) setFeedback(EMPTY_FEEDBACK);
+      const nextPodCurlEligible = canCopyPodCurl(nextDetail);
+      if (detailIdentityRef.current !== nextIdentity
+          || podCurlEligibleRef.current !== nextPodCurlEligible) {
+        cancelPodCurlAction();
+        setFeedback(EMPTY_FEEDBACK);
+      }
       detailIdentityRef.current = nextIdentity;
+      podCurlEligibleRef.current = nextPodCurlEligible;
       setDetail(nextDetail);
       setMissingSelection(false);
       setError(null);
@@ -267,14 +325,7 @@ export const DryRunJourney = forwardRef(function DryRunJourney(
         stopForUnauthorized(sessionId);
         return { status: 'unauthorized' };
       } else if (requestError?.kind === 'not-found') {
-        suppressAutoSelectRef.current = true;
-        selectionGenerationRef.current += 1;
-        selectedRef.current = null;
-        detailIdentityRef.current = null;
-        setSelectedJobId(null);
-        setDetail(null);
-        setFeedback(EMPTY_FEEDBACK);
-        setMissingSelection(true);
+        clearMissingSelection();
         return { status: 'partial' };
       } else {
         setError('request-failed');
@@ -287,7 +338,7 @@ export const DryRunJourney = forwardRef(function DryRunJourney(
         maybeStartExtensionRefresh();
       }
     }
-  }, [companyId, stopForUnauthorized]);
+  }, [cancelPodCurlAction, clearMissingSelection, companyId, stopForUnauthorized]);
 
   const refresh = useCallback(async ({ manual = false } = {}) => {
     if (!mountedRef.current || stoppedRef.current || refreshInFlightRef.current
@@ -307,9 +358,11 @@ export const DryRunJourney = forwardRef(function DryRunJourney(
       setError(null);
 
       if (nextJobs.length === 0) {
+        cancelPodCurlAction();
         selectionGenerationRef.current += 1;
         selectedRef.current = null;
         detailIdentityRef.current = null;
+        podCurlEligibleRef.current = false;
         setSelectedJobId(null);
         setDetail(null);
         setFeedback(EMPTY_FEEDBACK);
@@ -343,7 +396,7 @@ export const DryRunJourney = forwardRef(function DryRunJourney(
         maybeStartExtensionRefresh();
       }
     }
-  }, [companyId, loadDetail, stopForUnauthorized]);
+  }, [cancelPodCurlAction, companyId, loadDetail, stopForUnauthorized]);
 
   const refreshFailures = useCallback(async () => {
     if (!mountedRef.current || stoppedRef.current || failureInFlightRef.current
@@ -605,6 +658,9 @@ export const DryRunJourney = forwardRef(function DryRunJourney(
     suppressAutoSelectRef.current = false;
     selectedRef.current = null;
     detailIdentityRef.current = null;
+    podCurlEligibleRef.current = false;
+    podCurlActionRef.current += 1;
+    podCurlInFlightRef.current = false;
     selectionGenerationRef.current += 1;
     refreshInFlightRef.current = false;
     detailInFlightRef.current = false;
@@ -626,6 +682,7 @@ export const DryRunJourney = forwardRef(function DryRunJourney(
     setError(null);
     setMissingSelection(false);
     setFeedback(EMPTY_FEEDBACK);
+    setCopyingPodCurl(false);
     setFailures([]);
     setFailureLoading(true);
     setFailureError(null);
@@ -653,6 +710,9 @@ export const DryRunJourney = forwardRef(function DryRunJourney(
       preJobGenerationRef.current += 1;
       selectionGenerationRef.current += 1;
       detailRequestRef.current += 1;
+      podCurlEligibleRef.current = false;
+      podCurlActionRef.current += 1;
+      podCurlInFlightRef.current = false;
       settleExtensionRequest(extensionRefreshRef.current.active, 'stale');
       settleExtensionRequest(extensionRefreshRef.current.queued, 'stale');
       extensionRefreshRef.current = { active: null, queued: null };
@@ -685,16 +745,18 @@ export const DryRunJourney = forwardRef(function DryRunJourney(
 
   const selectJob = useCallback(jobId => {
     suppressAutoSelectRef.current = false;
+    cancelPodCurlAction();
     selectionGenerationRef.current += 1;
     selectedRef.current = jobId;
     detailIdentityRef.current = null;
+    podCurlEligibleRef.current = false;
     setSelectedJobId(jobId);
     setDetail(null);
     setMissingSelection(false);
     setError(null);
     setFeedback(EMPTY_FEEDBACK);
     loadDetail(jobId, { replacePending: true });
-  }, [loadDetail]);
+  }, [cancelPodCurlAction, loadDetail]);
 
   const download = useCallback(async () => {
     if (!detail) return;
@@ -739,6 +801,70 @@ export const DryRunJourney = forwardRef(function DryRunJourney(
       else if (!stoppedRef.current) announce('Diagnostic JSON could not be downloaded');
     }
   }, [announce, companyId, detail, revokeObjectUrl, stopForUnauthorized]);
+
+  const copyPodCurl = useCallback(async () => {
+    if (!detail || !canCopyPodCurl(detail) || podCurlInFlightRef.current
+        || stoppedRef.current) return;
+    const jobId = detail.job.jobId;
+    const identity = detailIdentity(detail);
+    if (selectedRef.current !== jobId || detailIdentityRef.current !== identity
+        || !podCurlEligibleRef.current) return;
+    const sessionId = sessionRef.current;
+    const selectionGeneration = selectionGenerationRef.current;
+    const actionId = podCurlActionRef.current + 1;
+    podCurlActionRef.current = actionId;
+    podCurlInFlightRef.current = true;
+    setCopyingPodCurl(true);
+    setFeedback(EMPTY_FEEDBACK);
+    let envelope = null;
+    let command = null;
+    const isCurrent = () => mountedRef.current
+      && !stoppedRef.current
+      && sessionId === sessionRef.current
+      && selectionGeneration === selectionGenerationRef.current
+      && actionId === podCurlActionRef.current
+      && selectedRef.current === jobId
+      && detailIdentityRef.current === identity
+      && podCurlEligibleRef.current;
+    try {
+      envelope = await getDryRunPodCurl({ companyId, jobId });
+      if (!isCurrent()) return;
+      command = buildPodCurl(envelope);
+      let copied = false;
+      let clipboard = null;
+      let writeText = null;
+      try {
+        clipboard = typeof navigator === 'undefined' ? null : navigator.clipboard;
+        writeText = typeof clipboard?.writeText === 'function' ? clipboard.writeText : null;
+      } catch {
+        clipboard = null;
+        writeText = null;
+      }
+      if (writeText) {
+        try {
+          await writeText.call(clipboard, command);
+          copied = true;
+        } catch {
+          copied = false;
+        }
+      }
+      if (!isCurrent()) return;
+      announce(copied ? 'Pod cURL copied' : 'Pod cURL could not be copied');
+    } catch (requestError) {
+      if (!isCurrent()) return;
+      if (requestError?.kind === 'unauthorized') stopForUnauthorized(sessionId);
+      else if (requestError?.kind === 'not-found') clearMissingSelection();
+      else announce('Pod cURL could not be copied');
+    } finally {
+      command = null;
+      envelope = null;
+      if (mountedRef.current && !stoppedRef.current
+          && sessionId === sessionRef.current && actionId === podCurlActionRef.current) {
+        podCurlInFlightRef.current = false;
+        setCopyingPodCurl(false);
+      }
+    }
+  }, [announce, clearMissingSelection, companyId, detail, stopForUnauthorized]);
 
   const routeMatchesDisplay = displayRouteKey === routeKey;
   const displayedError = routeMatchesDisplay ? error : null;
@@ -845,7 +971,10 @@ export const DryRunJourney = forwardRef(function DryRunJourney(
               <JourneyDetail
                 detail={detail}
                 feedback={feedback}
+                canCopyPodCurl={canCopyPodCurl(detail)}
+                copyingPodCurl={copyingPodCurl}
                 onDownload={download}
+                onCopyPodCurl={copyPodCurl}
               />
             )}
           </main>

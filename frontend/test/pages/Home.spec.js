@@ -7,6 +7,7 @@ import MockAdapter from 'axios-mock-adapter';
 import { Home } from '../../pages/Home';
 import {
   getDryRunJourney,
+  getDryRunPodCurl,
   getDryRunRequestBlob,
   listDryRunFailures,
   listDryRuns,
@@ -21,6 +22,7 @@ jest.mock('../../services/dryRunApi', () => ({
   listDryRuns: jest.fn(),
   listDryRunFailures: jest.fn(),
   getDryRunJourney: jest.fn(),
+  getDryRunPodCurl: jest.fn(),
   getDryRunRequestBlob: jest.fn(),
 }));
 
@@ -151,6 +153,7 @@ describe('Home routes', () => {
     expect(await screen.findByText('No held invoice journeys')).toBeInTheDocument();
     expect(await screen.findByText('No shipment activity recorded')).toBeInTheDocument();
     expect(listDryRunFailures).toHaveBeenCalledWith({ companyId: '12655', limit: 20 });
+    expect(getDryRunPodCurl).not.toHaveBeenCalled();
     expect(mock.history.get).toHaveLength(0);
   });
 
@@ -281,6 +284,7 @@ describe('Home routes', () => {
     getDryRunJourney.mockClear();
     listShipmentActivity.mockClear();
     getShipmentTimeline.mockClear();
+    getDryRunPodCurl.mockClear();
     getDryRunRequestBlob.mockClear();
     mock.resetHistory();
 
@@ -297,6 +301,7 @@ describe('Home routes', () => {
     expect(listPreJobFailures).toHaveBeenCalledTimes(1);
     expect(listShipmentActivity).toHaveBeenCalledTimes(1);
     expect(getShipmentTimeline).toHaveBeenCalledTimes(1);
+    expect(getDryRunPodCurl).not.toHaveBeenCalled();
     expect(getDryRunRequestBlob).not.toHaveBeenCalled();
   });
 

@@ -89,6 +89,7 @@ function harness(overrides = {}) {
     listDryRunFailures: jest.fn(),
     getDryRunJourney: jest.fn(),
     getDryRunRequest: jest.fn(),
+    getDryRunPodCurl: jest.fn(),
   };
   const shipmentActivityService = {
     listShipments: jest.fn(),
@@ -340,6 +341,7 @@ test('enabled runtime must return the exact coordinator repository and a complet
     runtime => { runtime.repository = repositorySurface([]); },
     runtime => { runtime.worker = { start: jest.fn(), stop: jest.fn() }; },
     runtime => { runtime.dryRunService = null; },
+    runtime => { delete runtime.dryRunService.getDryRunPodCurl; },
     runtime => { runtime.shipmentActivityService = null; },
     runtime => { runtime.extra = true; },
   ]) {

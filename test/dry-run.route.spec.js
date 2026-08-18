@@ -1,5 +1,7 @@
 'use strict';
 
+const crypto = require('crypto');
+
 const { EinvoiceError } = require('../src/einvoice/errors');
 const { createTestServer } = require('./utils/server');
 
@@ -18,6 +20,22 @@ const PAGE = Object.freeze({
 });
 const JOURNEY = Object.freeze({ schemaVersion: 1, mode: 'dry-run', job: { jobId: 42 } });
 const RAW_JSON = '[{"TRAN_DOC_NO":"VR-shipment-42-1","CUST_NAME_WALKIN":"<redacted>","CUST_ADDITIONAL_ID_NO_WALKIN":"<redacted>"}]';
+const POD_REQUEST_JSON = JSON.stringify([{
+  TRAN_DOC_NO: 'VR-shipment-42-1',
+  NOTE: "apostrophe ' ; $HOME $(id) `uname`\nsecond line",
+}], null, 2);
+const POD_REQUEST_HASH = crypto.createHash('sha256')
+  .update(POD_REQUEST_JSON, 'utf8')
+  .digest('hex');
+const POD_API_KEY = "SENTINEL actual OEIS key ' ; $HOME /+=";
+const POD_INPUT_ENVELOPE = Object.freeze({
+  method: 'POST',
+  url: "https://oeis.example.test/root'quoted/API/V2/Transaction/UpdateInvoiceData",
+  requestJson: POD_REQUEST_JSON,
+  requestHash: POD_REQUEST_HASH,
+  byteCount: Buffer.byteLength(POD_REQUEST_JSON, 'utf8'),
+  apiKey: POD_API_KEY,
+});
 const FAILURE_PAGE = Object.freeze({
   items: [{
     jobId: 51,
@@ -46,6 +64,7 @@ function service(overrides = {}) {
       contentType: 'application/json',
       sanitized: true,
     }),
+    getDryRunPodCurl: jest.fn().mockResolvedValue(POD_INPUT_ENVELOPE),
     ...overrides,
   };
 }
@@ -182,6 +201,141 @@ describe('authenticated dry-run read routes', () => {
     });
   });
 
+  test('returns the exact configured key in the no-store envelope without a prebuilt command', async () => {
+    const dryRunService = service();
+    const { request } = createTestServer({ dryRunService });
+
+    const response = await request
+      .get('/api/einvoice/dry-runs/42/oeis-pod-curl')
+      .expect('Content-Type', /^application\/json; charset=utf-8$/)
+      .expect(200);
+
+    expectSecurityHeaders(response);
+    expect(response.headers).not.toHaveProperty('content-disposition');
+    expect(response.body).toEqual(POD_INPUT_ENVELOPE);
+    expect(Object.keys(response.body)).toEqual([
+      'method', 'url', 'requestJson', 'requestHash', 'byteCount', 'apiKey',
+    ]);
+    expect(response.body.apiKey).toBe(POD_API_KEY);
+    expect(response.body.requestJson).toBe(POD_REQUEST_JSON);
+    expect(Buffer.from(response.body.requestJson, 'utf8'))
+      .toEqual(Buffer.from(POD_REQUEST_JSON, 'utf8'));
+    expect(response.text).not.toMatch(/authorization|curl\s/i);
+    expect(dryRunService.getDryRunPodCurl).toHaveBeenCalledWith({
+      companyId: '101', jobId: 42,
+    });
+    expect(dryRunService.getDryRunRequest).not.toHaveBeenCalled();
+  });
+
+  test('unknown, foreign, and non-held pod-envelope requests share the fixed safe 404', async () => {
+    const missing = new EinvoiceError('DRY_RUN_NOT_FOUND', 'private tenant or state detail');
+    const ownService = service({ getDryRunPodCurl: jest.fn().mockRejectedValue(missing) });
+    const foreignService = service({ getDryRunPodCurl: jest.fn().mockRejectedValue(missing) });
+    const own = createTestServer({ dryRunService: ownService });
+    const foreign = createTestServer({ dryRunService: foreignService, companyId: 202 });
+
+    const unknownResponse = await own.request
+      .get('/api/einvoice/dry-runs/42/oeis-pod-curl')
+      .expect(404, { success: false });
+    const foreignResponse = await foreign.request
+      .get('/api/einvoice/dry-runs/42/oeis-pod-curl')
+      .expect(404, { success: false });
+
+    expectSecurityHeaders(unknownResponse);
+    expectSecurityHeaders(foreignResponse);
+    expect(unknownResponse.text).toBe(foreignResponse.text);
+    expect(unknownResponse.text).not.toMatch(/private|tenant|state|202/);
+    expect(foreignService.getDryRunPodCurl).toHaveBeenCalledWith({
+      companyId: '202', jobId: 42,
+    });
+  });
+
+  test('rejects a non-exact pod input envelope with fixed logging and no secret echo', async () => {
+    const logger = { error: jest.fn() };
+    const dryRunService = service({
+      getDryRunPodCurl: jest.fn().mockResolvedValue({
+        ...POD_INPUT_ENVELOPE,
+        unexpected: 'SENTINEL-EXTRA-SECRET',
+      }),
+    });
+    const { request } = createTestServer({ dryRunService, logger });
+
+    const response = await request
+      .get('/api/einvoice/dry-runs/42/oeis-pod-curl')
+      .expect(500, { success: false });
+
+    expectSecurityHeaders(response);
+    expect(logger.error).toHaveBeenCalledWith(
+      'Application request failed', 'APPLICATION_REQUEST_FAILED',
+    );
+    expect(JSON.stringify(logger.error.mock.calls)).not.toMatch(/SENTINEL|EXTRA-SECRET/);
+  });
+
+  test('rejects a CRLF API key with fixed logging that never echoes the key', async () => {
+    const logger = { error: jest.fn() };
+    const dryRunService = service({
+      getDryRunPodCurl: jest.fn().mockResolvedValue({
+        ...POD_INPUT_ENVELOPE,
+        apiKey: 'SENTINEL-KEY\r\nInjected: yes',
+      }),
+    });
+    const { request } = createTestServer({ dryRunService, logger });
+
+    const response = await request
+      .get('/api/einvoice/dry-runs/42/oeis-pod-curl')
+      .expect(500, { success: false });
+
+    expectSecurityHeaders(response);
+    expect(logger.error).toHaveBeenCalledWith(
+      'Application request failed', 'APPLICATION_REQUEST_FAILED',
+    );
+    expect(JSON.stringify(logger.error.mock.calls)).not.toMatch(/SENTINEL|Injected|KEY/);
+  });
+
+  test('rejects non-string pod envelope atoms without invoking coercion hooks', async () => {
+    let coercionCalls = 0;
+    const dryRunService = service({
+      getDryRunPodCurl: jest.fn().mockResolvedValue({
+        ...POD_INPUT_ENVELOPE,
+        url: {
+          toString() {
+            coercionCalls += 1;
+            return POD_INPUT_ENVELOPE.url;
+          },
+        },
+      }),
+    });
+    const { request } = createTestServer({ dryRunService });
+
+    await request
+      .get('/api/einvoice/dry-runs/42/oeis-pod-curl')
+      .expect(500, { success: false });
+
+    expect(coercionCalls).toBe(0);
+  });
+
+  test('rejects a non-string API key without invoking its coercion hook', async () => {
+    let coercionCalls = 0;
+    const dryRunService = service({
+      getDryRunPodCurl: jest.fn().mockResolvedValue({
+        ...POD_INPUT_ENVELOPE,
+        apiKey: {
+          toString() {
+            coercionCalls += 1;
+            return POD_API_KEY;
+          },
+        },
+      }),
+    });
+    const { request } = createTestServer({ dryRunService });
+
+    await request
+      .get('/api/einvoice/dry-runs/42/oeis-pod-curl')
+      .expect(500, { success: false });
+
+    expect(coercionCalls).toBe(0);
+  });
+
   test('accepts the service-approved identifier alphabet in a safe quoted filename', async () => {
     const dryRunService = service({
       getDryRunRequest: jest.fn().mockResolvedValue({
@@ -300,6 +454,7 @@ describe('authenticated dry-run read routes', () => {
       '/api/einvoice/dry-runs/failures',
       '/api/einvoice/dry-runs/42',
       '/api/einvoice/dry-runs/42/oeis-request',
+      '/api/einvoice/dry-runs/42/oeis-pod-curl',
     ];
 
     for (const pathValue of paths) {
@@ -314,6 +469,7 @@ describe('authenticated dry-run read routes', () => {
     expect(dryRunService.listDryRunFailures).not.toHaveBeenCalled();
     expect(dryRunService.getDryRunJourney).not.toHaveBeenCalled();
     expect(dryRunService.getDryRunRequest).not.toHaveBeenCalled();
+    expect(dryRunService.getDryRunPodCurl).not.toHaveBeenCalled();
   });
 
   test('applies dry-run headers before JSON parsing and the global FDK handler', async () => {
@@ -376,6 +532,7 @@ describe('authenticated dry-run read routes', () => {
     expect(dryRunService.listDryRuns).not.toHaveBeenCalled();
     expect(dryRunService.getDryRunJourney).not.toHaveBeenCalled();
     expect(dryRunService.getDryRunRequest).not.toHaveBeenCalled();
+    expect(dryRunService.getDryRunPodCurl).not.toHaveBeenCalled();
   });
 
   test('invalid download metadata and service failures return fixed 500s with fixed logging', async () => {

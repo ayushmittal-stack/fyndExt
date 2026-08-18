@@ -1,6 +1,20 @@
 import axios from 'axios';
 
 const BASE_URL = '/api/einvoice/dry-runs';
+const MAX_POD_CURL_REQUEST_BYTES = 10 * 1024 * 1024;
+const MAX_POD_CURL_RESPONSE_BYTES = 64 * 1024 * 1024;
+const POD_CURL_FIELDS = Object.freeze([
+  'method',
+  'url',
+  'requestJson',
+  'requestHash',
+  'byteCount',
+  'apiKey',
+]);
+const POD_CURL_HASH_PATTERN = /^[a-f0-9]{64}$/;
+const POD_CURL_API_KEY_PATTERN = /^[\x20-\x7e]{1,1024}$/;
+const POD_CURL_PATH = '/API/V2/Transaction/UpdateInvoiceData';
+const SANITIZED_ERRORS = new WeakSet();
 
 const ERROR_COPY = Object.freeze({
   unauthorized: 'Your session has expired. Reauthenticate to inspect held journeys.',
@@ -11,6 +25,7 @@ const ERROR_COPY = Object.freeze({
 function sanitizedError(kind) {
   const sanitized = new Error(ERROR_COPY[kind]);
   sanitized.kind = kind;
+  SANITIZED_ERRORS.add(sanitized);
   return sanitized;
 }
 
@@ -189,6 +204,100 @@ function resolveHttpStatus() {
   return true;
 }
 
+function invalidPodCurlResponse() {
+  throw new Error('invalid pod cURL response');
+}
+
+function exactDataValues(value, fields) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)
+      || Object.getPrototypeOf(value) !== Object.prototype) invalidPodCurlResponse();
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  const keys = Reflect.ownKeys(descriptors);
+  if (keys.length !== fields.length || keys.some(key => typeof key !== 'string')) {
+    invalidPodCurlResponse();
+  }
+  const result = Object.create(null);
+  for (const field of fields) {
+    const descriptor = descriptors[field];
+    if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value')
+        || descriptor.enumerable !== true) invalidPodCurlResponse();
+    result[field] = descriptor.value;
+  }
+  return result;
+}
+
+function safePodCurlUrl(value) {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 4096
+      || value !== value.trim() || /[\u0000-\u001f\u007f-\u009f]/u.test(value)) {
+    invalidPodCurlResponse();
+  }
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    invalidPodCurlResponse();
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol)
+      || parsed.username || parsed.password || parsed.search || parsed.hash
+      || parsed.pathname !== POD_CURL_PATH && !parsed.pathname.endsWith(POD_CURL_PATH)) {
+    invalidPodCurlResponse();
+  }
+  return value;
+}
+
+function utf8(value) {
+  if (typeof TextEncoder !== 'function') invalidPodCurlResponse();
+  return new TextEncoder().encode(value);
+}
+
+async function sha256(value) {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle || typeof subtle.digest !== 'function') invalidPodCurlResponse();
+  const digest = await subtle.digest('SHA-256', value);
+  const bytes = new Uint8Array(digest);
+  if (bytes.length !== 32) invalidPodCurlResponse();
+  return Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function projectPodCurlEnvelope(text) {
+  if (typeof text !== 'string' || text.length === 0
+      || utf8(text).byteLength > MAX_POD_CURL_RESPONSE_BYTES) invalidPodCurlResponse();
+  const parsed = JSON.parse(text);
+  const envelope = exactDataValues(parsed, POD_CURL_FIELDS);
+  if (envelope.method !== 'POST') invalidPodCurlResponse();
+  const url = safePodCurlUrl(envelope.url);
+  if (typeof envelope.requestJson !== 'string' || envelope.requestJson.length === 0
+      || !Number.isSafeInteger(envelope.byteCount) || envelope.byteCount <= 0
+      || envelope.byteCount > MAX_POD_CURL_REQUEST_BYTES
+      || typeof envelope.requestHash !== 'string'
+      || !POD_CURL_HASH_PATTERN.test(envelope.requestHash)
+      || typeof envelope.apiKey !== 'string'
+      || envelope.apiKey !== envelope.apiKey.trim()
+      || !POD_CURL_API_KEY_PATTERN.test(envelope.apiKey)) invalidPodCurlResponse();
+  const requestBytes = utf8(envelope.requestJson);
+  if (requestBytes.byteLength !== envelope.byteCount) invalidPodCurlResponse();
+  const request = JSON.parse(envelope.requestJson);
+  if (!Array.isArray(request) || request.length === 0) invalidPodCurlResponse();
+  if (await sha256(requestBytes) !== envelope.requestHash) invalidPodCurlResponse();
+  return {
+    method: 'POST',
+    url,
+    requestJson: envelope.requestJson,
+    requestHash: envelope.requestHash,
+    byteCount: envelope.byteCount,
+    apiKey: envelope.apiKey,
+  };
+}
+
+function ownResponseValue(response, field) {
+  if (response === null || typeof response !== 'object') invalidPodCurlResponse();
+  const descriptor = Object.getOwnPropertyDescriptor(response, field);
+  if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) {
+    invalidPodCurlResponse();
+  }
+  return descriptor.value;
+}
+
 export function listDryRuns({ companyId, limit = 20, beforeId }) {
   const params = { limit };
   if (beforeId !== null && beforeId !== undefined) params.before_id = beforeId;
@@ -243,4 +352,35 @@ export function getDryRunRequestBlob({ companyId, jobId }) {
     headers: companyHeaders(companyId),
     responseType: 'blob',
   });
+}
+
+export async function getDryRunPodCurl({ companyId, jobId }) {
+  try {
+    const normalizedCompanyId = String(companyId);
+    if (!/^[1-9][0-9]{0,31}$/.test(normalizedCompanyId)
+        || !Number.isSafeInteger(jobId) || jobId <= 0) invalidPodCurlResponse();
+    let response;
+    try {
+      response = await axios.get(`${BASE_URL}/${jobId}/oeis-pod-curl`, {
+        headers: companyHeaders(normalizedCompanyId),
+        responseType: 'text',
+        transformResponse: [preserveRawText],
+        validateStatus: resolveHttpStatus,
+        maxContentLength: MAX_POD_CURL_RESPONSE_BYTES,
+      });
+    } catch {
+      throw sanitizedError('request-failed');
+    }
+    const status = ownResponseValue(response, 'status');
+    if (status === 401) throw sanitizedError('unauthorized');
+    if (status === 404) throw sanitizedError('not-found');
+    if (!Number.isSafeInteger(status) || status < 200 || status >= 300) {
+      throw sanitizedError('request-failed');
+    }
+    return await projectPodCurlEnvelope(ownResponseValue(response, 'data'));
+  } catch (error) {
+    if ((typeof error === 'object' || typeof error === 'function')
+        && error !== null && SANITIZED_ERRORS.has(error)) throw error;
+    throw sanitizedError('request-failed');
+  }
 }

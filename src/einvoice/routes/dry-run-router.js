@@ -1,5 +1,6 @@
 'use strict';
 
+const crypto = require('crypto');
 const express = require('express');
 const { types } = require('util');
 const { EinvoiceError } = require('../errors');
@@ -7,6 +8,11 @@ const { EinvoiceError } = require('../errors');
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 const DOWNLOAD_FILENAME = /^[A-Za-z0-9][A-Za-z0-9._:-]*-oeis-diagnostic\.json$/;
+const HASH_PATTERN = /^[a-f0-9]{64}$/;
+const OEIS_API_KEY_PATTERN = /^[\x20-\x7e]{1,1024}$/;
+const POD_INPUT_FIELDS = Object.freeze([
+  'method', 'url', 'requestJson', 'requestHash', 'byteCount', 'apiKey',
+]);
 
 function invalidRouter() {
   const error = new Error('Dry-run router configuration is invalid');
@@ -32,7 +38,10 @@ function snapshotService(value) {
       throw invalidRouter();
     }
     const snapshot = {};
-    for (const field of ['listDryRuns', 'listDryRunFailures', 'getDryRunJourney', 'getDryRunRequest']) {
+    for (const field of [
+      'listDryRuns', 'listDryRunFailures', 'getDryRunJourney', 'getDryRunRequest',
+      'getDryRunPodCurl',
+    ]) {
       const descriptor = Object.getOwnPropertyDescriptor(value, field);
       if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value')
           || typeof descriptor.value !== 'function') {
@@ -41,6 +50,52 @@ function snapshotService(value) {
       snapshot[field] = descriptor.value;
     }
     return Object.freeze(snapshot);
+  } catch {
+    throw invalidRouter();
+  }
+}
+
+function snapshotPodInputEnvelope(value) {
+  try {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)
+        || types.isProxy(value) || Object.getPrototypeOf(value) !== Object.prototype) {
+      throw invalidRouter();
+    }
+    const keys = Reflect.ownKeys(value);
+    if (keys.length !== POD_INPUT_FIELDS.length
+        || keys.some(key => typeof key !== 'string' || !POD_INPUT_FIELDS.includes(key))) {
+      throw invalidRouter();
+    }
+    const result = {};
+    for (const field of POD_INPUT_FIELDS) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, field);
+      if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) {
+        throw invalidRouter();
+      }
+      result[field] = descriptor.value;
+    }
+    if (result.method !== 'POST'
+        || typeof result.url !== 'string'
+        || typeof result.requestJson !== 'string'
+        || typeof result.requestHash !== 'string'
+        || !HASH_PATTERN.test(result.requestHash)
+        || !Number.isSafeInteger(result.byteCount) || result.byteCount <= 0
+        || typeof result.apiKey !== 'string'
+        || result.apiKey !== result.apiKey.trim()
+        || !OEIS_API_KEY_PATTERN.test(result.apiKey)) {
+      throw invalidRouter();
+    }
+    const parsed = new URL(result.url);
+    if (!['http:', 'https:'].includes(parsed.protocol)
+        || parsed.username !== '' || parsed.password !== ''
+        || parsed.search !== '' || parsed.hash !== ''
+        || parsed.href !== result.url
+        || Buffer.byteLength(result.requestJson, 'utf8') !== result.byteCount
+        || crypto.createHash('sha256').update(result.requestJson, 'utf8').digest('hex')
+          !== result.requestHash) {
+      throw invalidRouter();
+    }
+    return result;
   } catch {
     throw invalidRouter();
   }
@@ -126,6 +181,14 @@ function createDryRunRouter(options = {}) {
     if (companyId === null || query === null) return notFound(res);
     const result = await dryRunService.listDryRunFailures({ companyId, ...query });
     return res.json(result);
+  }));
+
+  router.get('/:jobId/oeis-pod-curl', route(async (req, res) => {
+    const companyId = authenticatedCompanyId(req);
+    const jobId = parsePositiveInteger(req.params.jobId);
+    if (companyId === null || jobId === null) return notFound(res);
+    const result = await dryRunService.getDryRunPodCurl({ companyId, jobId });
+    return res.json(snapshotPodInputEnvelope(result));
   }));
 
   router.get('/:jobId/oeis-request', route(async (req, res) => {

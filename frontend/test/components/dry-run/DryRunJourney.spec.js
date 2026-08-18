@@ -1,9 +1,11 @@
 import React from 'react';
+import { createHash } from 'crypto';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 
 import { DryRunJourney } from '../../../components/dry-run/DryRunJourney';
 import {
   getDryRunJourney,
+  getDryRunPodCurl,
   getDryRunRequestBlob,
   listDryRunFailures,
   listDryRuns,
@@ -15,6 +17,7 @@ jest.mock('../../../services/dryRunApi', () => ({
   listDryRuns: jest.fn(),
   listDryRunFailures: jest.fn(),
   getDryRunJourney: jest.fn(),
+  getDryRunPodCurl: jest.fn(),
   getDryRunRequestBlob: jest.fn(),
 }));
 
@@ -26,6 +29,47 @@ const PRIMARY_DOCUMENT_NUMBER = 'VR-17861361389811907489-1';
 const PRIMARY_SHIPMENT_ID = '17861361389811907489';
 const REQUEST_HASH = '196838dcf2c4086737b4f69480bff502ddf512b4b439a43ea1a8694d70f244c3';
 const OEIS_URL = "https://oeis.example.test/root'quoted/API/V2/Transaction/UpdateInvoiceData";
+const POD_URL = "https://oeis.example.test/root'quoted/$path;$(touch)/`whoami`/API/V2/Transaction/UpdateInvoiceData";
+const POD_REQUEST_JSON = '[{"NOTE":"O\'Reilly $HOME `uname` $(id); * ? [x]","UNICODE":"رياض"}]';
+const POD_API_KEY = "live'key$HOME $(id) `uname`; * ?";
+const POD_ENVELOPE = Object.freeze({
+  method: 'POST',
+  url: POD_URL,
+  requestJson: POD_REQUEST_JSON,
+  requestHash: '0031c9b6b00670fdc2102695338f1db6c6e8e8ea598bef58f3c61cec35ebcaab',
+  byteCount: 71,
+  apiKey: POD_API_KEY,
+});
+const EXPECTED_POD_CURL = [
+  "printf '%s' '[{\"NOTE\":\"O'\"'\"'Reilly $HOME `uname` $(id); * ? [x]\",\"UNICODE\":\"رياض\"}]' | curl --disable --silent --show-error --max-redirs 0 \\",
+  '  --request POST \\',
+  "  --noproxy '*' \\",
+  "  --url 'https://oeis.example.test/root'\"'\"'quoted/$path;$(touch)/`whoami`/API/V2/Transaction/UpdateInvoiceData' \\",
+  "  --header 'Authorization: APIkey live'\"'\"'key$HOME $(id) `uname`; * ?' \\",
+  "  --header 'Connection: keep-alive' \\",
+  "  --header 'Content-Type: application/json' \\",
+  '  --data-binary @-',
+].join('\n');
+const SECOND_POD_REQUEST_JSON = '[{"TRAN_DOC_NO":"VR-1","NOTE":"second O\'Reilly $HOME $(id) `uname`"}]';
+const SECOND_POD_API_KEY = "fresh'key$PATH $(false) `id`; []";
+const SECOND_POD_ENVELOPE = Object.freeze({
+  method: 'POST',
+  url: "https://oeis.example.test/second'fresh/API/V2/Transaction/UpdateInvoiceData",
+  requestJson: SECOND_POD_REQUEST_JSON,
+  requestHash: 'a2c2b716b6b77a271f5a295a505bdb27c0a91e439514032c60eb602f70255210',
+  byteCount: 69,
+  apiKey: SECOND_POD_API_KEY,
+});
+const EXPECTED_SECOND_POD_CURL = [
+  "printf '%s' '[{\"TRAN_DOC_NO\":\"VR-1\",\"NOTE\":\"second O'\"'\"'Reilly $HOME $(id) `uname`\"}]' | curl --disable --silent --show-error --max-redirs 0 \\",
+  '  --request POST \\',
+  "  --noproxy '*' \\",
+  "  --url 'https://oeis.example.test/second'\"'\"'fresh/API/V2/Transaction/UpdateInvoiceData' \\",
+  "  --header 'Authorization: APIkey fresh'\"'\"'key$PATH $(false) `id`; []' \\",
+  "  --header 'Connection: keep-alive' \\",
+  "  --header 'Content-Type: application/json' \\",
+  '  --data-binary @-',
+].join('\n');
 
 const jobs = [
   {
@@ -267,11 +311,22 @@ describe('DryRunJourney', () => {
     listDryRunFailures.mockResolvedValue({ items: failures, nextBeforeId: null });
     listPreJobFailures.mockResolvedValue({ items: [], nextBefore: null });
     getDryRunJourney.mockImplementation(({ jobId }) => Promise.resolve(detailFor(jobId)));
+    getDryRunPodCurl.mockResolvedValue(POD_ENVELOPE);
     getDryRunRequestBlob.mockResolvedValue(new Blob(['exact bytes'], { type: 'application/json' }));
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: undefined,
+    });
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: undefined,
+    });
   });
 
   afterEach(() => {
     jest.useRealTimers();
+    delete navigator.clipboard;
+    delete document.execCommand;
   });
 
   test('keeps the hand-derived frontend contract aligned with the real backend service', async () => {
@@ -320,6 +375,7 @@ describe('DryRunJourney', () => {
     const service = createDryRunService({
       repository,
       oeisBaseUrl: "https://oeis.example.test/root'quoted",
+      oeisApiKey: 'frontend-contract-test-key',
       maxRequestBytes: 63,
     });
 
@@ -911,7 +967,7 @@ describe('DryRunJourney', () => {
     delete window.__dryRunInjected;
   });
 
-  test('does not expose a clipboard action when a server-provided cURL is present', async () => {
+  test('ignores legacy server cURL fields and does not fetch a fresh command until the eligible action is clicked', async () => {
     const writeText = jest.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -920,11 +976,315 @@ describe('DryRunJourney', () => {
     const detail = detailFor();
     expect(detail.steps.oeisSubmission.curl).toContain('curl --silent');
     getDryRunJourney.mockResolvedValue(detail);
-    render(<DryRunJourney companyId="12655" />);
+    const { container } = render(<DryRunJourney companyId="12655" />);
 
     await screen.findByLabelText(`Dry-run journey ${PRIMARY_DOCUMENT_NUMBER}`);
     expect(screen.queryByRole('button', { name: 'Copy diagnostic cURL' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copy pod cURL' })).toBeInTheDocument();
+    expect(getDryRunPodCurl).not.toHaveBeenCalled();
     expect(writeText).not.toHaveBeenCalled();
+    expect(container).not.toHaveTextContent(detail.steps.oeisSubmission.curl);
+    expect(container).not.toHaveTextContent(POD_URL);
+    expect(container).not.toHaveTextContent(POD_REQUEST_JSON);
+    expect(container).not.toHaveTextContent(POD_API_KEY);
+    expect(container).not.toHaveTextContent('/oeis-pod-curl');
+  });
+
+  test.each([
+    ['non-dry-run mode', value => { value.mode = 'live'; }],
+    ['non-held job', value => { value.job.state = 'COMPLETED'; }],
+    ['incomplete Fynd lock', value => { value.steps.fyndLock.status = 'pending'; }],
+    ['unlocked Fynd result', value => { value.steps.fyndLock.result.locked = false; }],
+    ['non-held OEIS step', value => { value.steps.oeisSubmission.status = 'completed'; }],
+  ])('hides the real-submission action for a %s', async (_case, mutate) => {
+    const detail = detailFor();
+    mutate(detail);
+    getDryRunJourney.mockResolvedValue(detail);
+    render(<DryRunJourney companyId="12655" />);
+
+    await screen.findByLabelText(`Dry-run journey ${PRIMARY_DOCUMENT_NUMBER}`);
+    expect(screen.queryByRole('button', { name: 'Copy pod cURL' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/pasting it in the app pod performs a real OEIS submission/i))
+      .not.toBeInTheDocument();
+    expect(getDryRunPodCurl).not.toHaveBeenCalled();
+  });
+
+  test('fetches every click, POSIX-quotes exact fresh bytes, and never renders the command or envelope', async () => {
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    getDryRunPodCurl
+      .mockResolvedValueOnce(POD_ENVELOPE)
+      .mockResolvedValueOnce(SECOND_POD_ENVELOPE);
+    const { container } = render(<DryRunJourney companyId="12655" />);
+
+    const button = await screen.findByRole('button', { name: 'Copy pod cURL' });
+    expect(button.tagName).toBe('BUTTON');
+    expect(button).toHaveAttribute('type', 'button');
+    expect(button).toHaveAttribute('aria-busy', 'false');
+    expect(screen.getByText(/pasting it in the app pod performs a real OEIS submission/i))
+      .toHaveTextContent(/will not automatically record or reconcile that manual response/i);
+    expect(screen.getByText(/pasting it in the app pod performs a real OEIS submission/i))
+      .toHaveTextContent(/run the copied command only once\. Repeating it may create a duplicate invoice\./i);
+    expect(getDryRunPodCurl).not.toHaveBeenCalled();
+
+    fireEvent.click(button);
+    await waitFor(() => expect(writeText).toHaveBeenNthCalledWith(1, EXPECTED_POD_CURL));
+    expect(getDryRunPodCurl).toHaveBeenNthCalledWith(1, { companyId: '12655', jobId: 42 });
+    expect(screen.getByText('Pod cURL copied').closest('[role="status"]'))
+      .toHaveAttribute('aria-live', 'polite');
+
+    fireEvent.click(button);
+    await waitFor(() => expect(writeText).toHaveBeenNthCalledWith(2, EXPECTED_SECOND_POD_CURL));
+    expect(getDryRunPodCurl).toHaveBeenCalledTimes(2);
+    expect(getDryRunPodCurl).toHaveBeenNthCalledWith(2, { companyId: '12655', jobId: 42 });
+    expect(button).toHaveAttribute('aria-busy', 'false');
+    expect(button).toBeEnabled();
+    expect(container).not.toHaveTextContent(POD_URL);
+    expect(container).not.toHaveTextContent(POD_REQUEST_JSON);
+    expect(container).not.toHaveTextContent(SECOND_POD_REQUEST_JSON);
+    expect(container).not.toHaveTextContent(POD_API_KEY);
+    expect(container).not.toHaveTextContent(SECOND_POD_API_KEY);
+    expect(container).not.toHaveTextContent('/oeis-pod-curl');
+    expect(container).not.toHaveTextContent('Authorization: APIkey');
+    expect(document.querySelector('textarea')).toBeNull();
+  });
+
+  test('pipes a valid request above the exec argument limit through stdin without changing bytes', async () => {
+    const requestJson = JSON.stringify([{ NOTE: 'x'.repeat((128 * 1024) + 1) }]);
+    const envelope = Object.freeze({
+      method: 'POST',
+      url: POD_URL,
+      requestJson,
+      requestHash: createHash('sha256').update(requestJson, 'utf8').digest('hex'),
+      byteCount: Buffer.byteLength(requestJson, 'utf8'),
+      apiKey: POD_API_KEY,
+    });
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    getDryRunPodCurl.mockResolvedValue(envelope);
+    const { container } = render(<DryRunJourney companyId="12655" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy pod cURL' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    const copied = writeText.mock.calls[0][0];
+    expect(envelope.byteCount).toBeGreaterThan(128 * 1024);
+    expect(copied.startsWith(`printf '%s' '${requestJson}' | curl --disable --silent --show-error --max-redirs 0 \\`))
+      .toBe(true);
+    expect(copied.indexOf(requestJson)).toBe(copied.lastIndexOf(requestJson));
+    expect(copied).toContain('  --data-binary @-');
+    expect(container.textContent.includes(requestJson)).toBe(false);
+    expect(document.querySelector('textarea')).toBeNull();
+  });
+
+  test('disables curl configuration and proxy routing before targeting OEIS', async () => {
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    render(<DryRunJourney companyId="12655" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy pod cURL' }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    const copied = writeText.mock.calls[0][0];
+    const curlInvocation = copied.slice(copied.indexOf('| curl ') + 2);
+    const noProxyIndex = curlInvocation.indexOf("  --noproxy '*' \\");
+    const urlIndex = curlInvocation.indexOf('  --url ');
+    expect(curlInvocation.startsWith('curl --disable --silent --show-error --max-redirs 0 \\'))
+      .toBe(true);
+    expect(noProxyIndex).toBeGreaterThan(-1);
+    expect(noProxyIndex).toBeLessThan(urlIndex);
+  });
+
+  test('marks the copy action busy and ignores duplicate clicks while one fresh request is pending', async () => {
+    const pending = deferred();
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    getDryRunPodCurl.mockReturnValue(pending.promise);
+    render(<DryRunJourney companyId="12655" />);
+
+    const button = await screen.findByRole('button', { name: 'Copy pod cURL' });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(getDryRunPodCurl).toHaveBeenCalledTimes(1);
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute('aria-busy', 'true');
+
+    pending.resolve(POD_ENVELOPE);
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(EXPECTED_POD_CURL));
+    expect(button).toBeEnabled();
+    expect(button).toHaveAttribute('aria-busy', 'false');
+  });
+
+  test('does not materialize the command in the DOM when the Clipboard API is unavailable', async () => {
+    const execCommand = jest.fn(() => true);
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: execCommand,
+    });
+    const { container } = render(<DryRunJourney companyId="12655" />);
+    const button = await screen.findByRole('button', { name: 'Copy pod cURL' });
+    const appendToBody = jest.spyOn(document.body, 'appendChild');
+
+    try {
+      fireEvent.click(button);
+      expect(await screen.findByText('Pod cURL could not be copied')).toBeInTheDocument();
+      expect(execCommand).not.toHaveBeenCalled();
+      expect(appendToBody).not.toHaveBeenCalled();
+      expect(document.querySelector('textarea')).toBeNull();
+      expect(container).not.toHaveTextContent(POD_REQUEST_JSON);
+      expect(container).not.toHaveTextContent(POD_URL);
+      expect(container).not.toHaveTextContent(POD_API_KEY);
+    } finally {
+      appendToBody.mockRestore();
+    }
+  });
+
+  test('does not materialize the command in the DOM after clipboard rejection', async () => {
+    const writeText = jest.fn().mockRejectedValue(
+      new Error(`PRIVATE ${POD_URL} ${POD_REQUEST_JSON} ${POD_API_KEY}`),
+    );
+    const execCommand = jest.fn(() => true);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    Object.defineProperty(document, 'execCommand', {
+      configurable: true,
+      value: execCommand,
+    });
+    const { container } = render(<DryRunJourney companyId="12655" />);
+    const button = await screen.findByRole('button', { name: 'Copy pod cURL' });
+    const appendToBody = jest.spyOn(document.body, 'appendChild');
+
+    try {
+      fireEvent.click(button);
+      expect(await screen.findByText('Pod cURL could not be copied')).toBeInTheDocument();
+      expect(writeText).toHaveBeenCalledWith(EXPECTED_POD_CURL);
+      expect(execCommand).not.toHaveBeenCalled();
+      expect(appendToBody).not.toHaveBeenCalled();
+      expect(screen.queryByText(/PRIVATE/)).not.toBeInTheDocument();
+      expect(container).not.toHaveTextContent(POD_URL);
+      expect(container).not.toHaveTextContent(POD_REQUEST_JSON);
+      expect(container).not.toHaveTextContent(POD_API_KEY);
+      expect(document.querySelector('textarea')).toBeNull();
+      expect(screen.getByRole('button', { name: 'Copy pod cURL' })).toBeEnabled();
+    } finally {
+      appendToBody.mockRestore();
+    }
+  });
+
+  test('routes a current pod-cURL 401 through the terminal unauthorized flow', async () => {
+    const onSessionUnauthorized = jest.fn();
+    getDryRunPodCurl.mockRejectedValue({
+      kind: 'unauthorized',
+      message: `PRIVATE ${POD_URL} ${POD_REQUEST_JSON} ${POD_API_KEY}`,
+    });
+    render(
+      <DryRunJourney
+        companyId="12655"
+        routeKey="company:12655"
+        onSessionUnauthorized={onSessionUnauthorized}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy pod cURL' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent(/reauthenticate in Fynd/i);
+    expect(onSessionUnauthorized).toHaveBeenCalledWith('company:12655');
+    expect(screen.queryByText(/PRIVATE/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Copy pod cURL' })).not.toBeInTheDocument();
+  });
+
+  test('clears a stale held selection when the current pod-cURL request returns 404', async () => {
+    getDryRunPodCurl.mockRejectedValue({
+      kind: 'not-found',
+      message: `PRIVATE ${POD_URL} ${POD_REQUEST_JSON} ${POD_API_KEY}`,
+    });
+    render(<DryRunJourney companyId="12655" />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy pod cURL' }));
+    expect(await screen.findByText('Select another held journey to inspect.')).toBeInTheDocument();
+    expect(screen.queryByText(/PRIVATE/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Copy pod cURL' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /VR-OLD/ })).toBeInTheDocument();
+  });
+
+  test('does not clear or copy the new selection when an old pod-cURL request later returns 404', async () => {
+    const pending = deferred();
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    getDryRunPodCurl.mockReturnValueOnce(pending.promise);
+    render(<DryRunJourney companyId="12655" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy pod cURL' }));
+
+    fireEvent.click(screen.getByRole('button', { name: /VR-OLD/ }));
+    expect(await screen.findByLabelText('Dry-run journey VR-OLD')).toBeInTheDocument();
+    pending.reject({
+      kind: 'not-found', message: `PRIVATE ${POD_URL} ${POD_REQUEST_JSON} ${POD_API_KEY}`,
+    });
+    await flush();
+
+    expect(writeText).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Dry-run journey VR-OLD')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Copy pod cURL' })).toBeEnabled();
+    expect(screen.queryByText(/PRIVATE/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Pod cURL copied/i)).not.toBeInTheDocument();
+  });
+
+  test('does not copy or stop a changed route session when the old request later returns 401', async () => {
+    const pending = deferred();
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    getDryRunPodCurl.mockReturnValueOnce(pending.promise);
+    const view = render(<DryRunJourney companyId="12655" routeKey="route-a" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy pod cURL' }));
+
+    view.rerender(<DryRunJourney companyId="12655" routeKey="route-b" />);
+    await waitFor(() => expect(getDryRunJourney).toHaveBeenCalledTimes(2));
+    pending.reject({
+      kind: 'unauthorized', message: `PRIVATE ${POD_URL} ${POD_REQUEST_JSON} ${POD_API_KEY}`,
+    });
+    await flush();
+
+    expect(writeText).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Copy pod cURL' })).toBeEnabled();
+    expect(screen.queryByText(/reauthenticate/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/PRIVATE/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Pod cURL copied/i)).not.toBeInTheDocument();
+  });
+
+  test('does not copy or report after unmount while a pod-cURL request is pending', async () => {
+    const pending = deferred();
+    const writeText = jest.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    getDryRunPodCurl.mockReturnValueOnce(pending.promise);
+    const { unmount } = render(<DryRunJourney companyId="12655" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Copy pod cURL' }));
+
+    unmount();
+    pending.resolve(POD_ENVELOPE);
+    await flush();
+
+    expect(writeText).not.toHaveBeenCalled();
+    expect(document.querySelector('textarea')).toBeNull();
   });
 
   test('downloads authenticated exact bytes and caches the Blob by job and request hash', async () => {

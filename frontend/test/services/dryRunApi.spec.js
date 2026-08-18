@@ -1,12 +1,28 @@
 import axios from 'axios';
 import MockAdapter from 'axios-mock-adapter';
+import { webcrypto } from 'crypto';
+import { TextEncoder as NodeTextEncoder } from 'util';
 
 import {
+  getDryRunPodCurl,
   getDryRunJourney,
   getDryRunRequestBlob,
   listDryRunFailures,
   listDryRuns,
 } from '../../services/dryRunApi';
+
+const POD_REQUEST_JSON = '[{"NOTE":"O\'Reilly $HOME `uname` $(id); * ? [x]","UNICODE":"رياض"}]';
+const POD_REQUEST_HASH = '0031c9b6b00670fdc2102695338f1db6c6e8e8ea598bef58f3c61cec35ebcaab';
+const POD_URL = "https://oeis.example.test/root'quoted/$path;$(touch)/`whoami`/API/V2/Transaction/UpdateInvoiceData";
+const POD_API_KEY = "live'key$HOME $(id) `uname`; * ?";
+const POD_ENVELOPE = Object.freeze({
+  method: 'POST',
+  url: POD_URL,
+  requestJson: POD_REQUEST_JSON,
+  requestHash: POD_REQUEST_HASH,
+  byteCount: 71,
+  apiKey: POD_API_KEY,
+});
 
 const FAILURE_ITEM = Object.freeze({
   jobId: 51,
@@ -24,6 +40,29 @@ const FAILURE_ITEM = Object.freeze({
 
 describe('dry-run API client', () => {
   let mock;
+  let originalCrypto;
+  let originalTextEncoder;
+
+  beforeAll(() => {
+    originalCrypto = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
+    originalTextEncoder = Object.getOwnPropertyDescriptor(globalThis, 'TextEncoder');
+    Object.defineProperty(globalThis, 'crypto', {
+      configurable: true,
+      value: webcrypto,
+    });
+    Object.defineProperty(globalThis, 'TextEncoder', {
+      configurable: true,
+      value: NodeTextEncoder,
+    });
+  });
+
+  afterAll(() => {
+    if (originalCrypto) Object.defineProperty(globalThis, 'crypto', originalCrypto);
+    else delete globalThis.crypto;
+    if (originalTextEncoder) {
+      Object.defineProperty(globalThis, 'TextEncoder', originalTextEncoder);
+    } else delete globalThis.TextEncoder;
+  });
 
   beforeEach(() => {
     mock = new MockAdapter(axios);
@@ -63,6 +102,76 @@ describe('dry-run API client', () => {
 
     await expect(getDryRunRequestBlob({ companyId: '12655', jobId: 42 }))
       .resolves.toBe(payload);
+  });
+
+  test('loads and validates a fresh pod-cURL envelope as exact response text with company context', async () => {
+    mock.onGet('/api/einvoice/dry-runs/42/oeis-pod-curl').reply(config => {
+      expect(config.headers['x-company-id']).toBe('12655');
+      expect(config.responseType).toBe('text');
+      expect(config.transformResponse).toHaveLength(1);
+      expect(config.transformResponse[0]('{"raw":true}')).toBe('{"raw":true}');
+      expect(config.validateStatus(401)).toBe(true);
+      expect(config.validateStatus(500)).toBe(true);
+      return [200, JSON.stringify(POD_ENVELOPE)];
+    });
+
+    await expect(getDryRunPodCurl({ companyId: '12655', jobId: 42 }))
+      .resolves.toEqual(POD_ENVELOPE);
+  });
+
+  test.each([
+    ['null envelope', null],
+    ['array envelope', []],
+    ['missing field', {
+      method: 'POST', url: POD_URL, requestJson: POD_REQUEST_JSON,
+      requestHash: POD_REQUEST_HASH,
+    }],
+    ['unknown field', { ...POD_ENVELOPE, debug: 'PRIVATE-SENTINEL' }],
+    ['wrong method', { ...POD_ENVELOPE, method: 'PUT' }],
+    ['credential-bearing URL', { ...POD_ENVELOPE, url: 'https://user:secret@oeis.example.test/path' }],
+    ['URL query', { ...POD_ENVELOPE, url: 'https://oeis.example.test/path?token=PRIVATE-SENTINEL' }],
+    ['malformed request JSON', { ...POD_ENVELOPE, requestJson: '{' }],
+    ['wrong byte count', { ...POD_ENVELOPE, byteCount: 70 }],
+    ['oversized byte count', { ...POD_ENVELOPE, byteCount: (10 * 1024 * 1024) + 1 }],
+    ['invalid hash', { ...POD_ENVELOPE, requestHash: 'A'.repeat(64) }],
+    ['hash mismatch', { ...POD_ENVELOPE, requestHash: '0'.repeat(64) }],
+    ['empty API key', { ...POD_ENVELOPE, apiKey: '' }],
+    ['leading API-key whitespace', { ...POD_ENVELOPE, apiKey: ' secret' }],
+    ['trailing API-key whitespace', { ...POD_ENVELOPE, apiKey: 'secret ' }],
+    ['API-key newline', { ...POD_ENVELOPE, apiKey: 'secret\nheader' }],
+    ['non-ASCII API key', { ...POD_ENVELOPE, apiKey: 'سر' }],
+    ['oversized API key', { ...POD_ENVELOPE, apiKey: 'a'.repeat(1025) }],
+  ])('maps a malformed pod-cURL envelope to one fixed request-failed error: %s', async (_case, body) => {
+    mock.onGet('/api/einvoice/dry-runs/42/oeis-pod-curl').reply(200, JSON.stringify(body));
+
+    await expect(getDryRunPodCurl({ companyId: '12655', jobId: 42 })).rejects.toMatchObject({
+      kind: 'request-failed',
+      message: 'Dry-run data could not be loaded.',
+    });
+  });
+
+  test.each([
+    [401, 'unauthorized'],
+    [404, 'not-found'],
+    [500, 'request-failed'],
+  ])('sanitizes pod-cURL HTTP %s as %s without exposing the response', async (status, kind) => {
+    mock.onGet('/api/einvoice/dry-runs/42/oeis-pod-curl').reply(
+      status,
+      JSON.stringify({ message: 'PRIVATE-SENTINEL endpoint, payload, and key detail' }),
+    );
+
+    await expect(getDryRunPodCurl({ companyId: '12655', jobId: 42 })).rejects.toMatchObject({
+      kind,
+      message: expect.not.stringContaining('PRIVATE-SENTINEL'),
+    });
+  });
+
+  test('rejects invalid pod-cURL request identity before issuing a network request', async () => {
+    await expect(getDryRunPodCurl({ companyId: '', jobId: 0 })).rejects.toMatchObject({
+      kind: 'request-failed',
+      message: 'Dry-run data could not be loaded.',
+    });
+    expect(mock.history.get).toHaveLength(0);
   });
 
   test('lists a projected failure page through the dedicated endpoint and safe company cursor context', async () => {

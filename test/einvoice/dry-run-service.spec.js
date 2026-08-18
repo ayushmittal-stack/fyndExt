@@ -17,6 +17,7 @@ const LOCKED_AT = '2026-08-13T10:00:00.000Z';
 const UPDATED_AT = LOCKED_AT;
 const BUYER_NAME = 'SENTINEL BUYER 8A';
 const BUYER_NATIONAL_ID = '1098765432';
+const OEIS_API_KEY = "SENTINEL actual OEIS key ' ; $HOME /+=";
 const REQUEST_JSON = `[{"TRAN_DOC_NO":"${DOCUMENT_NUMBER}","NOTE":"رياض","CUST_NAME_WALKIN":"${BUYER_NAME}","CUST_ADDITIONAL_ID_NO_WALKIN":"${BUYER_NATIONAL_ID}"}]`;
 
 function hash(value = REQUEST_JSON) {
@@ -151,6 +152,7 @@ function makeService(repository = fakeRepository(), overrides = {}) {
     service: createDryRunService({
       repository,
       oeisBaseUrl: BASE_URL,
+      oeisApiKey: OEIS_API_KEY,
       maxRequestBytes: Buffer.byteLength(REQUEST_JSON, 'utf8'),
       ...overrides,
     }),
@@ -441,6 +443,98 @@ test('returns deterministic sanitized diagnostic bytes without mutating stored r
   expect(beforeJson).toBe(repository.getDryRunRequestForCompany.mock.results);
   expect(JSON.stringify(await service.getDryRunRequest({ companyId: COMPANY_ID, jobId: JOB_ID })))
     .not.toMatch(new RegExp(`${BUYER_NAME}|${BUYER_NATIONAL_ID}`));
+});
+
+test('returns the exact configured key only in the explicit envelope while preserving request bytes', async () => {
+  const requestJson = JSON.stringify([{
+    TRAN_DOC_NO: DOCUMENT_NUMBER,
+    NOTE: "apostrophe ' ; $HOME $(id) `uname`",
+  }], null, 2);
+  const requestHash = hash(requestJson);
+  const byteCount = Buffer.byteLength(requestJson, 'utf8');
+  const repository = fakeRepository({
+    job: heldJob({
+      oeisRequestJson: requestJson,
+      oeisRequest: JSON.parse(requestJson),
+      requestHash,
+    }),
+    request: { jobId: JOB_ID, documentNumber: DOCUMENT_NUMBER, requestJson, requestHash },
+  });
+  const { service } = makeService(repository, { maxRequestBytes: byteCount });
+
+  const result = await service.getDryRunPodCurl({ companyId: COMPANY_ID, jobId: JOB_ID });
+
+  expect(result).toEqual({
+    method: 'POST',
+    url: UPDATE_URL,
+    requestJson,
+    requestHash,
+    byteCount,
+    apiKey: OEIS_API_KEY,
+  });
+  expect(Object.keys(result)).toEqual([
+    'method', 'url', 'requestJson', 'requestHash', 'byteCount', 'apiKey',
+  ]);
+  expect(result.apiKey).toBe(OEIS_API_KEY);
+  expect(result.requestJson).toBe(requestJson);
+  expect(Buffer.from(result.requestJson, 'utf8')).toEqual(Buffer.from(requestJson, 'utf8'));
+  expect(repository.getDryRunRequestForCompany).toHaveBeenCalledWith({
+    companyId: COMPANY_ID, jobId: JOB_ID,
+  });
+  const otherResults = await Promise.all([
+    service.listDryRuns({ companyId: COMPANY_ID, limit: 20, beforeId: null }),
+    service.listDryRunFailures({ companyId: COMPANY_ID, limit: 20, beforeId: null }),
+    service.getDryRunJourney({ companyId: COMPANY_ID, jobId: JOB_ID }),
+    service.getDryRunRequest({ companyId: COMPANY_ID, jobId: JOB_ID }),
+  ]);
+  expect(JSON.stringify(otherResults)).not.toContain(OEIS_API_KEY);
+  expect(JSON.stringify(result)).not.toMatch(/authorization|curl/i);
+});
+
+test.each([
+  ['repository-scoped unknown, foreign, or non-held job', null, 'DRY_RUN_NOT_FOUND'],
+  ['mismatched returned job identity', {
+    jobId: JOB_ID + 1,
+    documentNumber: DOCUMENT_NUMBER,
+    requestJson: REQUEST_JSON,
+    requestHash: hash(),
+  }, 'DRY_RUN_NOT_FOUND'],
+  ['corrupt request hash', {
+    jobId: JOB_ID,
+    documentNumber: DOCUMENT_NUMBER,
+    requestJson: REQUEST_JSON,
+    requestHash: 'f'.repeat(64),
+  }, 'DRY_RUN_DATA_INVALID'],
+  ['request document identity mismatch', (() => {
+    const requestJson = JSON.stringify([{ TRAN_DOC_NO: 'VR-other-shipment-1' }]);
+    return {
+      jobId: JOB_ID,
+      documentNumber: DOCUMENT_NUMBER,
+      requestJson,
+      requestHash: hash(requestJson),
+    };
+  })(), 'DRY_RUN_DATA_INVALID'],
+])('fails closed before returning a pod input envelope for %s', async (_description, request, code) => {
+  const { service } = makeService(fakeRepository({ request }));
+
+  await expect(service.getDryRunPodCurl({ companyId: COMPANY_ID, jobId: JOB_ID }))
+    .rejects.toEqual(expect.objectContaining({
+      code,
+      message: code === 'DRY_RUN_NOT_FOUND'
+        ? 'Dry-run job was not found'
+        : 'Dry-run data is invalid',
+      retryable: false,
+    }));
+});
+
+test('rejects an over-limit pod input envelope before returning request bytes', async () => {
+  const byteCount = Buffer.byteLength(REQUEST_JSON, 'utf8');
+  const { service } = makeService(fakeRepository(), { maxRequestBytes: byteCount - 1 });
+
+  await expect(service.getDryRunPodCurl({ companyId: COMPANY_ID, jobId: JOB_ID }))
+    .rejects.toEqual(expect.objectContaining({
+      code: 'DRY_RUN_DATA_INVALID', message: 'Dry-run data is invalid', retryable: false,
+    }));
 });
 
 test('redacts both buyer fields in every diagnostic row while preserving non-identity fields', async () => {
@@ -779,6 +873,7 @@ test.each([
   expect(() => createDryRunService({
     repository: fakeRepository(),
     oeisBaseUrl,
+    oeisApiKey: OEIS_API_KEY,
     maxRequestBytes: 1,
   })).toThrow(expect.objectContaining({
     code: 'DRY_RUN_SERVICE_INVALID', message: 'Dry-run service configuration is invalid',
@@ -811,6 +906,7 @@ test.each([
   const options = {
     repository: fakeRepository(),
     oeisBaseUrl: BASE_URL,
+    oeisApiKey: OEIS_API_KEY,
     maxRequestBytes: 1,
   };
   addKey(options);
@@ -820,16 +916,96 @@ test.each([
 });
 
 test.each([
-  ['missing repository', { repository: null, oeisBaseUrl: BASE_URL, maxRequestBytes: 1 }],
-  ['missing held list method', { repository: { ...fakeRepository(), listDryRunJobsForCompany: null }, oeisBaseUrl: BASE_URL, maxRequestBytes: 1 }],
-  ['missing failure list method', { repository: { ...fakeRepository(), listFailedJobsForCompany: null }, oeisBaseUrl: BASE_URL, maxRequestBytes: 1 }],
-  ['an API key option', { repository: fakeRepository(), oeisBaseUrl: BASE_URL, maxRequestBytes: 1, apiKey: 'test-secret' }],
-  ['an invalid base URL', { repository: fakeRepository(), oeisBaseUrl: 'relative/path', maxRequestBytes: 1 }],
-  ['an unsafe byte limit', { repository: fakeRepository(), oeisBaseUrl: BASE_URL, maxRequestBytes: Number.MAX_SAFE_INTEGER + 1 }],
+  ['missing repository', { repository: null, oeisBaseUrl: BASE_URL, oeisApiKey: OEIS_API_KEY, maxRequestBytes: 1 }],
+  ['missing held list method', { repository: { ...fakeRepository(), listDryRunJobsForCompany: null }, oeisBaseUrl: BASE_URL, oeisApiKey: OEIS_API_KEY, maxRequestBytes: 1 }],
+  ['missing failure list method', { repository: { ...fakeRepository(), listFailedJobsForCompany: null }, oeisBaseUrl: BASE_URL, oeisApiKey: OEIS_API_KEY, maxRequestBytes: 1 }],
+  ['missing OEIS API key', { repository: fakeRepository(), oeisBaseUrl: BASE_URL, maxRequestBytes: 1 }],
+  ['an API key alias', { repository: fakeRepository(), oeisBaseUrl: BASE_URL, oeisApiKey: OEIS_API_KEY, maxRequestBytes: 1, apiKey: 'test-secret' }],
+  ['an invalid base URL', { repository: fakeRepository(), oeisBaseUrl: 'relative/path', oeisApiKey: OEIS_API_KEY, maxRequestBytes: 1 }],
+  ['an unsafe byte limit', { repository: fakeRepository(), oeisBaseUrl: BASE_URL, oeisApiKey: OEIS_API_KEY, maxRequestBytes: Number.MAX_SAFE_INTEGER + 1 }],
 ])('rejects factory configuration with %s', (_description, options) => {
   expect(() => createDryRunService(options)).toThrow(expect.objectContaining({
     code: 'DRY_RUN_SERVICE_INVALID', retryable: false,
   }));
+});
+
+test('accepts the exact 1024-character printable API-key boundary', async () => {
+  const oeisApiKey = 'K'.repeat(1024);
+  const { service } = makeService(fakeRepository(), { oeisApiKey });
+
+  await expect(service.getDryRunPodCurl({ companyId: COMPANY_ID, jobId: JOB_ID }))
+    .resolves.toEqual(expect.objectContaining({ apiKey: oeisApiKey }));
+});
+
+test.each([
+  ['empty', ''],
+  ['whitespace-only', '   '],
+  ['leading whitespace', ' key'],
+  ['trailing whitespace', 'key '],
+  ['carriage return', 'SENTINEL-KEY\rINJECTED'],
+  ['line feed', 'SENTINEL-KEY\nINJECTED'],
+  ['tab', 'SENTINEL-KEY\tINJECTED'],
+  ['DEL', 'SENTINEL-KEY\u007fINJECTED'],
+  ['non-ASCII', 'SENTINEL-KEY-é'],
+  ['oversized', 'K'.repeat(1025)],
+  ['symbol', Symbol('SENTINEL-KEY')],
+  ['object', { toString() { throw new Error('SENTINEL-KEY coercion'); } }],
+])('rejects a %s OEIS API key with one fixed non-leaking configuration error', (
+  _description,
+  oeisApiKey,
+) => {
+  let error;
+  try {
+    createDryRunService({
+      repository: fakeRepository(),
+      oeisBaseUrl: BASE_URL,
+      oeisApiKey,
+      maxRequestBytes: 1,
+    });
+  } catch (value) {
+    error = value;
+  }
+
+  expect(error).toEqual(expect.objectContaining({
+    code: 'DRY_RUN_SERVICE_INVALID',
+    message: 'Dry-run service configuration is invalid',
+    retryable: false,
+  }));
+  expect(`${error.message} ${error.stack} ${JSON.stringify(error)}`)
+    .not.toMatch(/SENTINEL-KEY|INJECTED|coercion/);
+});
+
+test('rejects accessor and Proxy API-key options without executing hostile traps', () => {
+  let accessorReads = 0;
+  const accessorOptions = {
+    repository: fakeRepository(), oeisBaseUrl: BASE_URL, maxRequestBytes: 1,
+  };
+  Object.defineProperty(accessorOptions, 'oeisApiKey', {
+    enumerable: true,
+    get() {
+      accessorReads += 1;
+      throw new Error('SENTINEL-ACCESSOR-KEY');
+    },
+  });
+  let proxyTraps = 0;
+  const proxyOptions = new Proxy({
+    repository: fakeRepository(), oeisBaseUrl: BASE_URL,
+    oeisApiKey: OEIS_API_KEY, maxRequestBytes: 1,
+  }, {
+    ownKeys() {
+      proxyTraps += 1;
+      throw new Error('SENTINEL-PROXY-KEY');
+    },
+  });
+
+  for (const options of [accessorOptions, proxyOptions]) {
+    expect(() => createDryRunService(options)).toThrow(expect.objectContaining({
+      code: 'DRY_RUN_SERVICE_INVALID',
+      message: 'Dry-run service configuration is invalid',
+    }));
+  }
+  expect(accessorReads).toBe(0);
+  expect(proxyTraps).toBe(0);
 });
 
 test('rejects inherited and accessor call input before invoking the repository', async () => {

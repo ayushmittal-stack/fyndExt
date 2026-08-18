@@ -58,10 +58,18 @@ function diagnosticSnapshot(value) {
   return snapshot;
 }
 
-export function JourneyDetail({ detail, onDownload, feedback }) {
+export function JourneyDetail({
+  detail,
+  onDownload,
+  onCopyPodCurl,
+  canCopyPodCurl,
+  copyingPodCurl,
+  feedback,
+}) {
   const { job, normalizedSnapshot, steps } = detail;
   const deferred = deferredValues(steps.fyndTransition.requestTemplate);
   const safeSnapshot = diagnosticSnapshot(normalizedSnapshot);
+  const podCurlWarningId = `dry-run-pod-curl-warning-${job.jobId}`;
 
   return (
     <article className="dry-run-detail" aria-label={`Dry-run journey ${job.documentNumber}`}>
@@ -123,9 +131,31 @@ export function JourneyDetail({ detail, onDownload, feedback }) {
           <p className="dry-run-curl-warning">
             Sanitized diagnostic only; it cannot be submitted to OEIS unchanged.
           </p>
-          <button className="dry-run-button" type="button" onClick={onDownload}>
-            Download diagnostic JSON
-          </button>
+          {canCopyPodCurl && (
+            <p className="dry-run-pod-curl-warning" id={podCurlWarningId}>
+              <strong>Real submission warning.</strong>{' '}
+              Pasting it in the app pod performs a real OEIS submission. Run the copied command
+              only once. Repeating it may create a duplicate invoice. The extension will not
+              automatically record or reconcile that manual response.
+            </p>
+          )}
+          <div className="dry-run-panel-actions">
+            <button className="dry-run-button" type="button" onClick={onDownload}>
+              Download diagnostic JSON
+            </button>
+            {canCopyPodCurl && (
+              <button
+                className="dry-run-button dry-run-button-pod-curl"
+                type="button"
+                aria-busy={copyingPodCurl}
+                aria-describedby={podCurlWarningId}
+                disabled={copyingPodCurl}
+                onClick={onCopyPodCurl}
+              >
+                Copy pod cURL
+              </button>
+            )}
+          </div>
         </section>
 
         <JsonPanel title="Blocked Fynd transition" value={steps.fyndTransition.requestTemplate}>

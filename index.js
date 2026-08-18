@@ -27,6 +27,7 @@ const RUNTIME_FIELDS = Object.freeze([
 const WORKER_FIELDS = Object.freeze(['start', 'runOnce', 'stop']);
 const DRY_RUN_FIELDS = Object.freeze([
   'listDryRuns', 'listDryRunFailures', 'getDryRunJourney', 'getDryRunRequest',
+  'getDryRunPodCurl',
 ]);
 const SHIPMENT_ACTIVITY_FIELDS = Object.freeze([
   'listShipments', 'listPreJobFailures', 'getTimeline',

@@ -78,6 +78,7 @@ function composition(overrides = {}) {
     listDryRunFailures: jest.fn(),
     getDryRunJourney: jest.fn(),
     getDryRunRequest: jest.fn(),
+    getDryRunPodCurl: jest.fn(),
   };
   const shipmentActivityService = {
     listShipments: jest.fn(),
@@ -189,6 +190,7 @@ test('enabled runtime consumes the ready Mongo repository and composes in the au
       listDryRunFailures: c.dryRunService.listDryRunFailures,
       getDryRunJourney: c.dryRunService.getDryRunJourney,
       getDryRunRequest: c.dryRunService.getDryRunRequest,
+      getDryRunPodCurl: c.dryRunService.getDryRunPodCurl,
     }),
     shipmentActivityService: expect.objectContaining({
       listShipments: c.shipmentActivityService.listShipments,
@@ -202,6 +204,7 @@ test('enabled runtime consumes the ready Mongo repository and composes in the au
   expect(c.deps.createDryRun).toHaveBeenCalledWith({
     repository: c.repository,
     oeisBaseUrl: 'https://oeis.example.test',
+    oeisApiKey: 'opaque-key',
     maxRequestBytes: 4096,
   });
   expect(c.deps.createShipmentActivity).toHaveBeenCalledWith({
@@ -453,7 +456,12 @@ test('snapshots dry-run service methods into a stable plain own-data surface', a
 
   expect(Object.getPrototypeOf(runtime.dryRunService)).toBe(Object.prototype);
   expect(Object.isFrozen(runtime.dryRunService)).toBe(true);
+  expect(Reflect.ownKeys(runtime.dryRunService)).toEqual([
+    'listDryRuns', 'listDryRunFailures', 'getDryRunJourney', 'getDryRunRequest',
+    'getDryRunPodCurl',
+  ]);
   expect(runtime.dryRunService.listDryRuns).toEqual(expect.any(Function));
+  expect(runtime.dryRunService.getDryRunPodCurl).toEqual(expect.any(Function));
   expect(Object.getOwnPropertyDescriptor(runtime.dryRunService, 'listDryRuns'))
     .toEqual(expect.objectContaining({ value: expect.any(Function) }));
 });

@@ -14,6 +14,7 @@ const { normalizeSnapshot } = require('./repositories/invoice-repository-validat
 const HELD_STATE = 'SUBMISSION_HELD';
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9._:-]+$/;
 const HASH_PATTERN = /^[a-f0-9]{64}$/;
+const OEIS_API_KEY_PATTERN = /^[\x20-\x7e]{1,1024}$/;
 const FINANCIAL_FIELDS = Object.freeze([
   'price_effective',
   'promotion_effective_discount',
@@ -184,7 +185,7 @@ function requireTimestamp(value, invalid) {
 function snapshotFactoryOptions(options) {
   try {
     if (!isPlainObject(options)) throw INVALID_BOUNDARY_VALUE;
-    const allowed = new Set(['repository', 'oeisBaseUrl', 'maxRequestBytes']);
+    const allowed = new Set(['repository', 'oeisBaseUrl', 'oeisApiKey', 'maxRequestBytes']);
     if (Reflect.ownKeys(options).some(key => !allowed.has(key))) {
       throw INVALID_BOUNDARY_VALUE;
     }
@@ -192,6 +193,12 @@ function snapshotFactoryOptions(options) {
   } catch {
     invalidService();
   }
+}
+
+function validateOeisApiKey(value) {
+  if (typeof value !== 'string' || value !== value.trim()
+      || !OEIS_API_KEY_PATTERN.test(value)) invalidService();
+  return value;
 }
 
 function snapshotRepository(repository) {
@@ -528,13 +535,13 @@ function snapshotHeldRequest(value, query, maxRequestBytes) {
     'requestHash',
   ], invalidData);
   requireIdentifier(request.documentNumber, invalidData);
-  validateRequestBytes(
+  const validation = validateRequestBytes(
     request.requestJson,
     request.requestHash,
     request.documentNumber,
     maxRequestBytes,
   );
-  return { ...identity, ...request };
+  return { ...identity, ...request, ...validation };
 }
 
 async function safeRepositoryRead(operation) {
@@ -549,12 +556,22 @@ function createDryRunService(options) {
   const {
     repository,
     oeisBaseUrl,
+    oeisApiKey,
     maxRequestBytes,
   } = snapshotFactoryOptions(options);
   const readPort = snapshotRepository(repository);
   const normalizedBaseUrl = normalizeBaseUrl(oeisBaseUrl);
+  const validatedOeisApiKey = validateOeisApiKey(oeisApiKey);
   if (!Number.isSafeInteger(maxRequestBytes) || maxRequestBytes <= 0) invalidService();
   const oeisUrl = buildOeisUrl(normalizedBaseUrl);
+
+  async function readValidatedHeldRequest(query) {
+    const returned = await safeRepositoryRead(() => readPort.getDryRunRequestForCompany.call(
+      repository,
+      query,
+    ));
+    return snapshotHeldRequest(returned, query, maxRequestBytes);
+  }
 
   return Object.freeze({
     async listDryRuns(input) {
@@ -647,22 +664,25 @@ function createDryRunService(options) {
 
     async getDryRunRequest(input) {
       const query = snapshotJobInput(input);
-      const returned = await safeRepositoryRead(() => readPort.getDryRunRequestForCompany.call(
-        repository,
-        query,
-      ));
-      const request = snapshotHeldRequest(returned, query, maxRequestBytes);
-      const { requestRows } = validateRequestBytes(
-        request.requestJson,
-        request.requestHash,
-        request.documentNumber,
-        maxRequestBytes,
-      );
+      const request = await readValidatedHeldRequest(query);
       return {
-        rawJson: sanitizedDiagnosticJson(requestRows),
+        rawJson: sanitizedDiagnosticJson(request.requestRows),
         filename: `${request.documentNumber}-oeis-diagnostic.json`,
         contentType: 'application/json',
         sanitized: true,
+      };
+    },
+
+    async getDryRunPodCurl(input) {
+      const query = snapshotJobInput(input);
+      const request = await readValidatedHeldRequest(query);
+      return {
+        method: 'POST',
+        url: oeisUrl,
+        requestJson: request.requestJson,
+        requestHash: request.requestHash,
+        byteCount: request.requestBytes,
+        apiKey: validatedOeisApiKey,
       };
     },
   });

@@ -14,6 +14,8 @@ RUN npm --prefix frontend run build \
 
 FROM node:24-alpine AS runtime
 
+RUN apk add --no-cache curl
+
 ENV NODE_ENV=production \
     BACKEND_PORT=8080
 

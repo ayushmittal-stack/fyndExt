@@ -35,7 +35,10 @@ function snapshotDryRunService(value) {
       throw invalidConfiguration();
     }
     const snapshot = {};
-    for (const field of ['listDryRuns', 'listDryRunFailures', 'getDryRunJourney', 'getDryRunRequest']) {
+    for (const field of [
+      'listDryRuns', 'listDryRunFailures', 'getDryRunJourney', 'getDryRunRequest',
+      'getDryRunPodCurl',
+    ]) {
       const descriptor = Object.getOwnPropertyDescriptor(value, field);
       if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value')
           || typeof descriptor.value !== 'function') {

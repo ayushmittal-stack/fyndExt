@@ -456,6 +456,26 @@
   color: #7c3d00;
 }
 
+.dry-run-pod-curl-warning {
+  margin: 10px 16px 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--dry-run-red);
+  background: #fff4f2;
+  color: #6f1d17;
+  line-height: 1.5;
+}
+
+.dry-run-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 14px 16px 16px;
+}
+
+.dry-run-panel-actions .dry-run-button {
+  margin: 0;
+}
+
 .dry-run-button {
   margin: 14px 16px 16px;
   padding: 9px 13px;
@@ -470,6 +490,20 @@
 
 .dry-run-button:hover {
   background: #245bc5;
+}
+
+.dry-run-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.dry-run-button-pod-curl {
+  border-color: #9a3412;
+  background: #9a3412;
+}
+
+.dry-run-button-pod-curl:hover:not(:disabled) {
+  background: #7c2d12;
 }
 
 .dry-run-button-secondary {
