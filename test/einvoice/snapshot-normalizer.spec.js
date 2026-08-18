@@ -130,7 +130,11 @@ test('normalizes the sanitized live Fynd shipment shape to the existing canonica
 });
 
 test('builds the exact OEIS row from the normalized sanitized live Fynd shipment', () => {
-  const normalized = normalizeLive();
+  const normalized = normalizeLive(liveWebhookWithShipment((shipment) => {
+    shipment.shipment_status.created_ts = '2026-08-18T03:00:00+05:30';
+  }));
+  expect(normalized.shipment.confirmedAt).toBe('2026-08-17T21:30:00.000Z');
+  expect(normalized.shipment.taxEligibility.verifiedAt).toBe('2026-08-17T21:30:00.000Z');
   const result = buildOeisPayload(normalized.shipment, {
     companyCode: 'COMPANY',
     sourceErp: 'Fynd.com',
@@ -151,7 +155,7 @@ test('builds the exact OEIS row from the normalized sanitized live Fynd shipment
     },
     taxPolicyResolver: createTaxPolicyResolver({
       policyVersion: '2026-08-17',
-      now: () => new Date('2026-08-18T12:00:00.000Z'),
+      now: () => new Date('2026-08-18T09:00:00.000Z'),
     }),
   });
 
@@ -516,7 +520,7 @@ test.each([
     shipment.order.meta.custom_cart_meta.custom_conditions.national_id = 'sensitive-invalid-id';
   }],
   ['invalid exact verification timestamp', (shipment) => {
-    delete shipment.shipment_status.status_created_at;
+    delete shipment.shipment_status.created_ts;
     shipment.created_ts = '2026-08-10T06:30:00.000Z';
   }],
 ])('persists a safe unresolved eligibility candidate for %s', (_case, change) => {
@@ -560,7 +564,8 @@ test.each([
   1786343400,
 ])('drops an invalid exact eligibility timestamp without using a general timestamp fallback: %p', timestamp => {
   const body = webhookWithShipment((shipment) => {
-    shipment.shipment_status.status_created_at = timestamp;
+    shipment.shipment_status.created_ts = timestamp;
+    shipment.shipment_status.status_created_at = '2026-08-10T06:30:00.000Z';
     shipment.created_ts = '2026-08-10T06:31:00.000Z';
   });
 
@@ -648,7 +653,7 @@ test.each([
     class ShipmentStatus {
       constructor() {
         this.status = 'bag_confirmed';
-        this.status_created_at = '2026-08-10T06:30:00.000Z';
+        this.created_ts = '2026-08-10T06:30:00.000Z';
       }
     }
     shipment.shipment_status = new ShipmentStatus();
@@ -675,14 +680,15 @@ test.each([
 test('treats an accessor verification timestamp as unresolved without invoking it or falling back', () => {
   const counter = { calls: 0 };
   const body = webhookWithShipment(shipment => {
-    Object.defineProperty(shipment.shipment_status, 'status_created_at', {
+    Object.defineProperty(shipment.shipment_status, 'created_ts', {
       enumerable: true,
       get() {
         counter.calls += 1;
         return '2026-08-10T06:30:00.000Z';
       },
     });
-    shipment.created_ts = '2026-08-10T06:31:00.000Z';
+    shipment.shipment_status.status_created_at = '2026-08-10T06:31:00.000Z';
+    shipment.created_ts = '2026-08-10T06:32:00.000Z';
     shipment.updated_ts = '2026-08-10T06:32:00.000Z';
   });
 

@@ -6,6 +6,7 @@ function makeShipmentWebhook(overrides = {}) {
     shipment_status: {
       status: 'bag_confirmed',
       status_created_at: '2026-08-10T06:30:00.000Z',
+      created_ts: '2026-08-10T06:30:00.000Z',
     },
     fulfilling_store: { code: 'BRANCH-01' },
     currency: 'SAR',
@@ -60,7 +61,8 @@ function makeLiveNestedShipmentWebhook() {
         shipment_id: '17861361389811907490',
         shipment_status: {
           status: 'bag_confirmed',
-          status_created_at: '2026-08-18T06:30:00.000Z',
+          status_created_at: '2026-08-18T12:00:00.000Z',
+          created_ts: '2026-08-18T06:30:00.000Z',
         },
         fulfilling_store: { code: 'BRANCH-01' },
         currency: { currency_code: 'SAR' },

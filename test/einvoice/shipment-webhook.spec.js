@@ -15,6 +15,7 @@ function validBody(overrides = {}) {
     shipment_status: {
       status: 'bag_confirmed',
       status_created_at: '2026-08-10T03:45:00.000Z',
+      created_ts: '2026-08-10T03:45:00.000Z',
     },
     fulfilling_store: { code: 'store-1' },
     currency: 'SAR',

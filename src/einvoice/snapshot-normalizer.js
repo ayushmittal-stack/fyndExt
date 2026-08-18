@@ -636,10 +636,12 @@ function getStatusProvenance(shipment) {
   if (typeof status !== 'string' || status.trim() === '') {
     fail('SHIPMENT_STATUS_REQUIRED', 'Shipment status is required');
   }
-  const rawVerifiedAt = ownData(statusRecord, 'status_created_at');
+  const rawVerifiedAt = ownData(statusRecord, 'created_ts');
   return {
     status,
-    verifiedAt: validEligibilityTimestamp(rawVerifiedAt) ? rawVerifiedAt : null,
+    verifiedAt: validEligibilityTimestamp(rawVerifiedAt)
+      ? new Date(rawVerifiedAt).toISOString()
+      : null,
   };
 }
 
