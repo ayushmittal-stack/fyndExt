@@ -1,14 +1,20 @@
 .DS_Store
+.git
+.gitignore
+.worktrees
 node_modules
+frontend/node_modules
 /dist
 /build
 
 
-# local env files
-.env.local
-.env.*.local
+# Secrets and local runtime files
+.env*
+*.log
+extension.context.json
+oeis-masters.json
 
-# Log files
+# Package-manager logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -22,19 +28,21 @@ pnpm-debug.log*
 *.sln
 *.sw?
 
-/frontend/dist/*
+/frontend/public/dist/*
 
 # ignore snapshots
 __snapshots__/
 
 # ignore coverage
 coverage/
+.superpowers/
+docs/
+test/
+README.md
 
 .vscode/*
 !.vscode/launch.json
 .idea/
 
-# ignore coverage_output.json
+# Generated coverage artifacts
 coverage_output.json
-# SQLite DB
-session_storage.db

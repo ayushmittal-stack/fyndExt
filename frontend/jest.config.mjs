@@ -3,9 +3,6 @@ export default {
   coverageReporters: ["json-summary", "lcov", "cobertura"],
   moduleFileExtensions: ["js", "jsx", "json", "node"],
   testMatch: ["**/test/**/*.+(js|jsx|ts|tsx)", "**/?(*.)+(spec|test).+(js|jsx|ts|tsx)"],
-  transformIgnorePatterns: [
-    "/node_modules/(?!url-join)/"
-  ],
   testPathIgnorePatterns: [
     "/node_modules/",
     "/test/setup.js"

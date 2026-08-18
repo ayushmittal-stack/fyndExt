@@ -1,42 +1,44 @@
-let request = null;
-const supertest = require('supertest');
-const app = require('../../server');
+'use strict';
+
 const express = require('express');
+const supertest = require('supertest');
+const path = require('path');
 
-// Create a new instance of the app with the mock middleware
-const createTestApp = () => {
-  app.use((req, res, next) => {
-    req.platformClient = mockPlatformClient;
+const { createApp } = require('../../src/app');
+
+function createTestServer(options = {}) {
+  const platformApiRoutes = express.Router();
+  platformApiRoutes.use(options.platformMiddleware || ((req, res, next) => {
+    req.fdkSession = options.fdkSession === undefined ? {
+      company_id: options.companyId === undefined ? 101 : options.companyId,
+    } : options.fdkSession;
     next();
-  });
-  const testApp = express();
-
-  // Middleware to attach mockPlatformClient
-  testApp.use((req, res, next) => {
-    req.platformClient = mockPlatformClient;
-    next();
-  });
-
-  // Use the existing app as a middleware
-  testApp.use(app);
-  return testApp;
-};
-
-// Create a mock platformClient
-const mockPlatformClient = {
-  catalog: {
-    getProducts: jest.fn().mockResolvedValue([{ id: 1, name: 'Product A' }]),
-  },
-  application: (applicationId) => ({
-    catalog: {
-      getAppProducts: jest.fn().mockResolvedValue([{ id: 2, name: 'App Product B' }]),
+  }));
+  const platformStackLengthBeforeApp = platformApiRoutes.stack.length;
+  const fdkExtension = {
+    fdkHandler: options.fdkHandler || ((req, res, next) => next()),
+    platformApiRoutes,
+    webhookRegistry: {
+      processWebhook: options.processWebhook || jest.fn().mockResolvedValue(undefined),
     },
-  }),
-};
-
-module.exports = () => {
-  if (!request) {
-    request = supertest(createTestApp());
-  }
-  return { request, mockPlatformClient }
+  };
+  const logger = options.logger || { error: jest.fn() };
+  const app = createApp({
+    fdkExtension,
+    logger,
+    staticPath: path.join(__dirname, '..', '..', 'frontend'),
+    dryRunService: options.dryRunService === undefined ? null : options.dryRunService,
+    shipmentActivityService: options.shipmentActivityService === undefined
+      ? null
+      : options.shipmentActivityService,
+  });
+  return {
+    app,
+    request: supertest(app),
+    fdkExtension,
+    logger,
+    platformStackLengthBeforeApp,
+  };
 }
+
+module.exports = { createTestServer };

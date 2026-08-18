@@ -1,0 +1,630 @@
+.shipment-activity-shell {
+  --activity-ink: #162033;
+  --activity-paper: #f6f8fb;
+  --activity-rule: #d8dee9;
+  --activity-verified: #147d64;
+  --activity-caution: #d97706;
+  --activity-fault: #b42318;
+  box-sizing: border-box;
+  width: min(1180px, calc(100% - 48px));
+  margin: 24px auto;
+  border: 1px solid var(--activity-rule);
+  background: var(--activity-paper);
+  color: var(--activity-ink);
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.shipment-activity-shell *,
+.shipment-activity-shell *::before,
+.shipment-activity-shell *::after {
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.shipment-activity-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 32px;
+  padding: 22px 24px;
+  border-bottom: 1px solid var(--activity-rule);
+}
+
+.shipment-activity-heading-block {
+  max-width: 680px;
+}
+
+.shipment-activity-eyebrow,
+.shipment-activity-readonly,
+.shipment-activity-stage,
+.shipment-activity-refresh-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .09em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.shipment-activity-eyebrow {
+  margin: 0 0 5px;
+  color: var(--activity-verified);
+}
+
+.shipment-activity-heading-block h2 {
+  margin: 0;
+  font-size: clamp(22px, 3vw, 30px);
+  font-weight: 750;
+  letter-spacing: -.035em;
+  line-height: 1.1;
+}
+
+.shipment-activity-supporting {
+  margin: 8px 0 0;
+  color: #4d586b;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.shipment-activity-refresh-block {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 8px;
+  padding-top: 3px;
+}
+
+.shipment-activity-refresh-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--activity-verified);
+  animation: shipment-activity-pulse 2s ease-in-out infinite;
+}
+
+.shipment-activity-refresh-dot-paused {
+  background: #7a8494;
+  animation: none;
+}
+
+.shipment-activity-refresh-label,
+.shipment-activity-mono,
+.shipment-activity-shell time,
+.shipment-activity-shell code {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.shipment-activity-readonly {
+  grid-column: 2;
+  color: #697386;
+  font-size: 10px;
+}
+
+.shipment-activity-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 276px) minmax(0, 1fr);
+}
+
+.shipment-activity-recent {
+  border-right: 1px solid var(--activity-rule);
+}
+
+.shipment-activity-panel-heading,
+.shipment-activity-timeline-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--activity-rule);
+}
+
+.shipment-activity-panel-heading h3,
+.shipment-activity-timeline-heading h3,
+.shipment-activity-timeline-heading p {
+  margin: 0;
+}
+
+.shipment-activity-panel-heading h3,
+.shipment-activity-timeline-heading h3 {
+  font-size: 15px;
+  font-weight: 750;
+  letter-spacing: -.015em;
+}
+
+.shipment-activity-panel-heading span,
+.shipment-activity-timeline-heading > p,
+.shipment-activity-timeline-heading > div > span {
+  color: #697386;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.shipment-activity-timeline-heading > div > p {
+  margin: 4px 0 0;
+  color: #697386;
+  font-size: 12px;
+}
+
+.shipment-activity-head-list,
+.shipment-activity-timeline,
+.shipment-activity-nested-list,
+.shipment-activity-code-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shipment-activity-head-list li + li {
+  border-top: 1px solid var(--activity-rule);
+}
+
+.shipment-activity-head-button,
+.shipment-activity-load-button {
+  width: 100%;
+  min-height: 44px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.shipment-activity-head-button {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 10px;
+  padding: 14px 18px;
+}
+
+.shipment-activity-head-button:hover {
+  background: #eef2f7;
+}
+
+.shipment-activity-head-button[aria-pressed="true"] {
+  box-shadow: inset 4px 0 0 var(--activity-verified);
+  background: #eaf3f1;
+}
+
+.shipment-activity-head-button:focus-visible,
+.shipment-activity-load-button:focus-visible {
+  position: relative;
+  z-index: 2;
+  outline: 3px solid #1d4ed8;
+  outline-offset: -3px;
+}
+
+.shipment-activity-head-id,
+.shipment-activity-head-document,
+.shipment-activity-head-button time,
+.shipment-activity-head-button code {
+  grid-column: 1 / -1;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.shipment-activity-head-id {
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.shipment-activity-head-document,
+.shipment-activity-head-stage,
+.shipment-activity-head-button time,
+.shipment-activity-head-button code {
+  color: #5d687a;
+  font-size: 11px;
+}
+
+.shipment-activity-head-action {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.shipment-activity-head-outcome {
+  justify-self: end;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.shipment-activity-head-outcome-success {
+  color: var(--activity-verified);
+}
+
+.shipment-activity-head-outcome-started,
+.shipment-activity-head-outcome-held,
+.shipment-activity-head-outcome-retry_scheduled {
+  color: var(--activity-caution);
+}
+
+.shipment-activity-head-outcome-failure,
+.shipment-activity-head-outcome-timeout,
+.shipment-activity-head-outcome-indeterminate {
+  color: var(--activity-fault);
+}
+
+.shipment-activity-load-button {
+  padding: 12px 18px;
+  border-top: 1px solid var(--activity-rule);
+  color: #285b51;
+  font-size: 12px;
+  font-weight: 750;
+  text-align: center;
+}
+
+.shipment-activity-load-button:hover:not(:disabled) {
+  background: #eaf3f1;
+}
+
+.shipment-activity-load-button:disabled {
+  color: #8b94a3;
+  cursor: wait;
+}
+
+.shipment-activity-timeline-panel {
+  min-height: 250px;
+}
+
+.shipment-activity-timeline {
+  position: relative;
+  padding: 22px 24px 22px 176px;
+}
+
+.shipment-activity-timeline::before {
+  position: absolute;
+  top: 22px;
+  bottom: 22px;
+  left: 157px;
+  width: 1px;
+  background: #aab4c2;
+  content: "";
+}
+
+.shipment-activity-event {
+  position: relative;
+  padding: 0 0 28px 22px;
+}
+
+.shipment-activity-event:last-child {
+  padding-bottom: 0;
+}
+
+.shipment-activity-time-tab {
+  position: absolute;
+  top: 0;
+  right: calc(100% + 40px);
+  width: 132px;
+  color: #5b6678;
+  font-size: 10px;
+  line-height: 1.45;
+  text-align: right;
+}
+
+.shipment-activity-notch {
+  position: absolute;
+  top: 2px;
+  left: -23px;
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--activity-verified);
+  background: var(--activity-paper);
+}
+
+.shipment-activity-event-started .shipment-activity-notch {
+  border-color: var(--activity-caution);
+  border-radius: 50%;
+}
+
+.shipment-activity-event-held .shipment-activity-notch,
+.shipment-activity-event-retry_scheduled .shipment-activity-notch {
+  border-color: var(--activity-caution);
+  transform: rotate(45deg);
+}
+
+.shipment-activity-event-failure .shipment-activity-notch,
+.shipment-activity-event-timeout .shipment-activity-notch,
+.shipment-activity-event-indeterminate .shipment-activity-notch {
+  border-color: var(--activity-fault);
+  background: var(--activity-fault);
+}
+
+.shipment-activity-event-body {
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--activity-rule);
+}
+
+.shipment-activity-event:last-child .shipment-activity-event-body {
+  border-bottom: 0;
+}
+
+.shipment-activity-event-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.shipment-activity-stage {
+  color: #697386;
+  font-size: 9px;
+}
+
+.shipment-activity-event-heading h4 {
+  margin: 2px 0 0;
+  font-size: 15px;
+  font-weight: 750;
+  letter-spacing: -.01em;
+}
+
+.shipment-activity-outcome {
+  flex: none;
+  padding: 3px 7px;
+  border: 1px solid currentColor;
+  font-size: 10px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.shipment-activity-outcome-success {
+  color: var(--activity-verified);
+}
+
+.shipment-activity-outcome-started,
+.shipment-activity-outcome-held,
+.shipment-activity-outcome-retry_scheduled {
+  color: var(--activity-caution);
+}
+
+.shipment-activity-outcome-failure,
+.shipment-activity-outcome-timeout,
+.shipment-activity-outcome-indeterminate {
+  color: var(--activity-fault);
+}
+
+.shipment-activity-event-meta,
+.shipment-activity-summary dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 16px;
+  margin: 14px 0 0;
+}
+
+.shipment-activity-definition {
+  min-width: 0;
+}
+
+.shipment-activity-definition-wide {
+  grid-column: 1 / -1;
+}
+
+.shipment-activity-definition dt {
+  margin-bottom: 2px;
+  color: #697386;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.shipment-activity-definition dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.shipment-activity-time-range {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+
+.shipment-activity-summary {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--activity-rule);
+  background: #fff;
+}
+
+.shipment-activity-summary h5 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.shipment-activity-nested-list li {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--activity-rule);
+  overflow-wrap: anywhere;
+}
+
+.shipment-activity-nested-list li:last-child {
+  border-bottom: 0;
+}
+
+.shipment-activity-code-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.shipment-activity-code-list li {
+  padding: 2px 5px;
+  border: 1px solid var(--activity-rule);
+}
+
+.shipment-activity-summary-unavailable,
+.shipment-activity-loading,
+.shipment-activity-state,
+.shipment-activity-alert,
+.shipment-activity-live {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.shipment-activity-loading {
+  display: flex;
+  min-height: 144px;
+  margin: 0;
+  padding: 22px 18px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #596477;
+  text-align: center;
+}
+
+.shipment-activity-loading-image {
+  display: block;
+  width: clamp(72px, 11vw, 112px);
+  max-width: 50%;
+  height: auto;
+}
+
+.shipment-activity-state {
+  margin: 0;
+  padding: 22px 18px;
+  color: #596477;
+}
+
+.shipment-activity-state strong {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--activity-ink);
+}
+
+.shipment-activity-state p {
+  margin: 0;
+}
+
+.shipment-activity-alert {
+  margin: 0;
+  padding: 12px 18px;
+  border-top: 1px solid #edc484;
+  background: #fff8e9;
+  color: #7a4600;
+  font-weight: 650;
+}
+
+.shipment-activity-timeline-panel > .shipment-activity-alert {
+  border-top: 0;
+  border-bottom: 1px solid #edc484;
+}
+
+.shipment-activity-alert-terminal {
+  border-top: 0;
+  background: #fff0ef;
+  color: var(--activity-fault);
+}
+
+.shipment-activity-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@keyframes shipment-activity-pulse {
+  0%, 100% { opacity: .45; }
+  50% { opacity: 1; }
+}
+
+@media (max-width: 779px) {
+  .shipment-activity-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .shipment-activity-recent {
+    border-right: 0;
+    border-bottom: 1px solid var(--activity-rule);
+  }
+}
+
+@media (max-width: 520px) {
+  .shipment-activity-shell {
+    width: calc(100% - 24px);
+    margin: 12px auto;
+  }
+
+  .shipment-activity-header {
+    display: block;
+    padding: 16px;
+  }
+
+  .shipment-activity-refresh-block {
+    margin-top: 14px;
+  }
+
+  .shipment-activity-panel-heading,
+  .shipment-activity-timeline-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 14px 16px;
+  }
+
+  .shipment-activity-timeline {
+    padding: 18px 16px 18px 58px;
+  }
+
+  .shipment-activity-timeline::before {
+    top: 18px;
+    bottom: 18px;
+    left: 39px;
+  }
+
+  .shipment-activity-time-tab {
+    position: static;
+    width: auto;
+    margin-bottom: 7px;
+    text-align: left;
+  }
+
+  .shipment-activity-notch {
+    left: -24px;
+  }
+
+  .shipment-activity-event {
+    padding-left: 18px;
+  }
+
+  .shipment-activity-event-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .shipment-activity-event-meta,
+  .shipment-activity-summary dl {
+    grid-template-columns: 1fr;
+  }
+
+  .shipment-activity-definition-wide {
+    grid-column: auto;
+  }
+
+  .shipment-activity-nested-list li {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .shipment-activity-refresh-dot {
+    animation: none;
+  }
+
+  .shipment-activity-loading-image {
+    display: none;
+  }
+}

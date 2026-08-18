@@ -1,9 +1,11 @@
 module.exports = {
     verbose: true,
     testEnvironment: 'node',
+    roots: ['<rootDir>/test'],
     coverageReporters: ['json-summary', 'lcov'],
     testPathIgnorePatterns: ['/frontend/'],
-    setupFiles: ['./jest.init.js'],
+    modulePathIgnorePatterns: ['<rootDir>/frontend/'],
+    setupFiles: ['<rootDir>/jest.init.js'],
     testMatch: [
         '**/test/**/*.spec.[jt]s?(x)',
         '!**/test/global/**/*.[jt]s?(x)'
@@ -16,15 +18,9 @@ module.exports = {
     coverageDirectory: './coverage',
     collectCoverage: true,
     collectCoverageFrom: [
-        '**/*.js',  // Adjust this pattern to include the files you want to be covered
-        '!**/node_modules/**',
-        '!**/test/**',
-        '!**/jest.config.js',
-        '!**/index.js',
-        "!**/coverage/**",
-        "!**/coverage_output.js/**",
-        "!**/coverage_output.json/**",
-        "!**/start-dev.js"
+        '<rootDir>/index.js',
+        '<rootDir>/server.js',
+        '<rootDir>/src/**/*.js',
     ],
     bail: true
 };
