@@ -1,6 +1,7 @@
 'use strict';
 
 const { EinvoiceError } = require('../src/einvoice/errors');
+const FdkSession = require('@gofynd/fdk-extension-javascript/express/session/session');
 const { createTestServer } = require('./utils/server');
 
 const RECENT_PAGE = Object.freeze({
@@ -73,6 +74,31 @@ function expectHeaders(response) {
 }
 
 describe('authenticated shipment activity routes', () => {
+  test.each([
+    [
+      '/api/einvoice/shipment-activity',
+      'listShipments',
+      RECENT_PAGE,
+      { companyId: '15862', limit: 20, before: null },
+    ],
+    [
+      '/api/einvoice/shipment-activity/pre-job-failures',
+      'listPreJobFailures',
+      PRE_JOB_FAILURE_PAGE,
+      { companyId: '15862', limit: 20, before: null },
+    ],
+  ])('accepts the installed FDK session for %s', async (path, serviceMethod, page, expectedCall) => {
+    const shipmentActivityService = activityService();
+    const fdkSession = new FdkSession('authenticated-session');
+    fdkSession.company_id = 15862;
+    const { request } = createTestServer({ shipmentActivityService, fdkSession });
+
+    const response = await request.get(path).expect(200, page);
+
+    expectHeaders(response);
+    expect(shipmentActivityService[serviceMethod]).toHaveBeenCalledWith(expectedCall);
+  });
+
   test('lists recent shipments from the authenticated tenant with safe defaults', async () => {
     const shipmentActivityService = activityService();
     const server = createTestServer({ shipmentActivityService, companyId: 15862 });

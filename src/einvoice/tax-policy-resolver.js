@@ -132,14 +132,16 @@ function createTaxPolicyResolver(options = {}) {
           || !validInstant(verifiedAt, currentTime)) {
         fail('TAX_ELIGIBILITY_EVIDENCE_INVALID', 'Healthcare tax eligibility evidence is invalid');
       }
-      if (eligible) {
-        const buyerName = readOwn(eligibility, 'buyerName');
-        const buyerNationalId = readOwn(eligibility, 'buyerNationalId');
-        if (typeof buyerName !== 'string' || buyerName.trim() === ''
-            || /[\u0000-\u001F\u007F-\u009F]/.test(buyerName)
-            || typeof buyerNationalId !== 'string' || !/^[0-9]{10}$/.test(buyerNationalId)) {
-          fail('TAX_ELIGIBILITY_IDENTITY_REQUIRED', 'Healthcare buyer identity is required');
-        }
+      const buyerName = readOwn(eligibility, 'buyerName');
+      const buyerNationalId = readOwn(eligibility, 'buyerNationalId');
+      const validBuyerName = typeof buyerName === 'string' && buyerName.trim() !== ''
+        && !/[\u0000-\u001F\u007F-\u009F]/.test(buyerName);
+      const validBuyerNationalId = typeof buyerNationalId === 'string'
+        && /^[0-9]{10}$/.test(buyerNationalId);
+      if ((eligible && (!validBuyerName || !validBuyerNationalId))
+          || (!eligible && !((buyerName === null || validBuyerName)
+            && (buyerNationalId === null || validBuyerNationalId)))) {
+        fail('TAX_ELIGIBILITY_IDENTITY_REQUIRED', 'Healthcare buyer identity is required');
       }
 
       const amounts = readFinancials(financialBreakup);

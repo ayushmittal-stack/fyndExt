@@ -85,11 +85,12 @@ SGH/Fynd owns the semantics of that field; the extension validates and records
 the decision but does not infer nationality or eligibility from identity or
 other order data.
 
-When that decision is `true`, the exact own strings `recipient_name` and
-`national_id` are required from the same `custom_conditions` object, and the
-National ID must contain exactly 10 ASCII digits. When the decision is `false`,
-neither buyer identity value is copied into the normalized snapshot or OEIS
-request.
+The exact own strings `recipient_name` and `national_id` are read from the same
+`custom_conditions` object whenever the decision is a boolean. A valid name is
+nonblank and contains no control characters; a valid National ID contains
+exactly 10 ASCII digits. When the decision is `true`, both values are required.
+When it is `false`, each value is optional and independently preserved when
+valid; an absent or malformed optional value is normalized to `null`.
 
 The exact own `body.event.id` is the non-PII evidence reference. It records
 provenance; it does not redefine the authoritative SGH/Fynd decision. The exact
@@ -123,8 +124,8 @@ Decision meanings:
 - `true`: derive healthcare category `Z`, rate `0.00`, and reason
   `VATEX-SA-HEA`; require all evidence and identity fields and require Fynd line
   tax financials to be `0.00`;
-- `false`: derive category `S`, rate `15.00`, copy no buyer identity, and omit
-  healthcare VAT reason fields;
+- `false`: derive category `S`, rate `15.00`, preserve any independently valid
+  buyer identity values, and omit healthcare VAT reason fields;
 - missing, null, contradictory, stale, or unsupported: hold the invoice with a
   deterministic non-retryable tax-eligibility error. Never guess `Z` or silently
   default an unclassified healthcare order.
@@ -193,8 +194,11 @@ For an eligible `Z/0` healthcare line, emit:
 ```
 
 For an `S/15` line, emit `S`, `15.00`, and the reconciled tax amount, and omit
-the VAT reason fields. Customer fields remain subject to the existing invoice
-contract.
+the VAT reason fields. When at least one validated customer value is available,
+emit the complete customer block: the available value, an explicit `null` for
+the absent counterpart, and `CUST_ADDL_ID_TYP_WALKIN: "NAT"`. When neither
+customer value is available, omit the complete customer block. Existing
+prepared request bytes are immutable and are not rebuilt by this rule change.
 
 Mixed `S` and `Z` lines are permitted only if controlled OEIS validation proves that the current
 invoice envelope and total fields are accepted. Category and reason are
@@ -258,8 +262,9 @@ action API.
 The held-job OEIS download is a sanitized diagnostic request, not the exact
 stored request and not an executable submission body. The backend validates the
 stored request bytes and hash first, parses the top-level OEIS row array, replaces
-every `CUST_NAME_WALKIN` and `CUST_ADDITIONAL_ID_NO_WALKIN` value with
-`<redacted>`, and deterministically serializes separate diagnostic bytes. The
+each string `CUST_NAME_WALKIN` and `CUST_ADDITIONAL_ID_NO_WALKIN` value with
+`<redacted>` while preserving an explicit `null`, and deterministically serializes
+separate diagnostic bytes. The
 persisted request bytes and hash used by workflow and retries remain unchanged.
 
 ## Rollout Gates

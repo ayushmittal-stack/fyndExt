@@ -506,8 +506,8 @@ function sanitizedDiagnosticJson(requestRows) {
         const descriptor = Object.getOwnPropertyDescriptor(row, key);
         if (!descriptor || !Object.prototype.hasOwnProperty.call(descriptor, 'value')) invalidData();
         if (key === 'CUST_NAME_WALKIN' || key === 'CUST_ADDITIONAL_ID_NO_WALKIN') {
-          if (typeof descriptor.value !== 'string') invalidData();
-          result[key] = '<redacted>';
+          if (!(descriptor.value === null || typeof descriptor.value === 'string')) invalidData();
+          result[key] = descriptor.value === null ? null : '<redacted>';
         } else {
           const scalar = descriptor.value === null
             || typeof descriptor.value === 'string'

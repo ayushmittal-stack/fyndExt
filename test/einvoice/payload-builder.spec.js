@@ -224,7 +224,7 @@ test.each([
   expect(() => build(snapshot)).toThrow(expect.objectContaining({ code: 'LINE_TOTAL_MISMATCH' }));
 });
 
-test('standard-rate rows omit HEA reason and buyer identity fields', () => {
+test('legacy standard-rate rows without recipient identity omit the customer block', () => {
   const row = build().rows[0];
 
   for (const field of [
@@ -232,6 +232,38 @@ test('standard-rate rows omit HEA reason and buyer identity fields', () => {
     'CUST_NAME_WALKIN', 'CUST_ADDITIONAL_ID_NO_WALKIN', 'CUST_ADDL_ID_TYP_WALKIN',
   ]) expect(row).not.toHaveProperty(field);
 });
+
+test.each([
+  ['both recipient values', 'Standard Buyer', '1999999999', {
+    CUST_NAME_WALKIN: 'Standard Buyer',
+    CUST_ADDITIONAL_ID_NO_WALKIN: '1999999999',
+    CUST_ADDL_ID_TYP_WALKIN: 'NAT',
+  }],
+  ['recipient name only', 'Standard Buyer', null, {
+    CUST_NAME_WALKIN: 'Standard Buyer',
+    CUST_ADDITIONAL_ID_NO_WALKIN: null,
+    CUST_ADDL_ID_TYP_WALKIN: 'NAT',
+  }],
+  ['National ID only', null, '1999999999', {
+    CUST_NAME_WALKIN: null,
+    CUST_ADDITIONAL_ID_NO_WALKIN: '1999999999',
+    CUST_ADDL_ID_TYP_WALKIN: 'NAT',
+  }],
+])('maps an available S/15 %s into the confirmed OEIS customer block',
+  (_description, buyerName, buyerNationalId, expected) => {
+    const snapshot = makeSnapshot();
+    snapshot.taxEligibility.buyerName = buyerName;
+    snapshot.taxEligibility.buyerNationalId = buyerNationalId;
+
+    const result = build(snapshot);
+
+    for (const row of result.rows) {
+      expect(row).toEqual(expect.objectContaining(expected));
+      expect(row).not.toHaveProperty('TRAN_VAT_EXEMPT_REASON_CODE');
+      expect(row).not.toHaveProperty('TRAN_VAT_EXEMPT_REASON_TEXT');
+    }
+    expect(JSON.parse(result.requestJson)).toEqual(result.rows);
+  });
 
 test('holds an order containing mixed product-line rates', () => {
   const snapshot = makeSnapshot();

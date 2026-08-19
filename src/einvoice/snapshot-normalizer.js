@@ -676,7 +676,7 @@ function normalizeTaxEligibility(shipment, eventId, verifiedAt) {
   const governmentBorneVatEligible = typeof rawDecision === 'boolean' ? rawDecision : null;
   let buyerName = null;
   let buyerNationalId = null;
-  if (governmentBorneVatEligible === true && conditions) {
+  if (typeof governmentBorneVatEligible === 'boolean' && conditions) {
     const rawBuyerName = ownData(conditions, 'recipient_name');
     const rawNationalId = ownData(conditions, 'national_id');
     if (typeof rawBuyerName === 'string' && rawBuyerName.trim() !== ''

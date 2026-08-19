@@ -2,6 +2,7 @@
 
 const express = require('express');
 const { types } = require('node:util');
+const FdkSession = require('@gofynd/fdk-extension-javascript/express/session/session');
 const { EinvoiceError } = require('../errors');
 const {
   SHIPMENT_ACTIVITY_RESPONSE_MAX_BYTES,
@@ -10,6 +11,7 @@ const {
 const DEFAULT_LIST_LIMIT = 20;
 const DEFAULT_TIMELINE_LIMIT = 50;
 const MAX_LIMIT = 50;
+const FDK_SESSION_PROTOTYPE = FdkSession.prototype;
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9._:-]+$/;
 const HEAD_ITEM_FIELDS = Object.freeze([
   'shipmentId', 'jobId', 'documentNumber', 'lastStage', 'lastAction',
@@ -117,7 +119,9 @@ function authenticatedCompanyId(req) {
   const session = ownDataValue(req, 'fdkSession');
   try {
     if (session === null || typeof session !== 'object' || Array.isArray(session)
-        || isProxy(session) || Object.getPrototypeOf(session) !== Object.prototype) return null;
+        || isProxy(session)) return null;
+    const prototype = Object.getPrototypeOf(session);
+    if (prototype !== Object.prototype && prototype !== FDK_SESSION_PROTOTYPE) return null;
   } catch (_error) {
     return null;
   }

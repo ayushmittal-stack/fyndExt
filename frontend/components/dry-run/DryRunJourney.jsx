@@ -50,14 +50,13 @@ function posixSingleQuote(value) {
 
 function buildPodCurl(envelope) {
   return [
-    `printf '%s' ${posixSingleQuote(envelope.requestJson)} | curl --disable --silent --show-error --max-redirs 0 \\`,
+    'curl --silent --show-error --max-redirs 0 \\',
     `  --request ${envelope.method} \\`,
-    `  --noproxy ${posixSingleQuote('*')} \\`,
     `  --url ${posixSingleQuote(envelope.url)} \\`,
     `  --header ${posixSingleQuote(`Authorization: APIkey ${envelope.apiKey}`)} \\`,
     `  --header ${posixSingleQuote('Connection: keep-alive')} \\`,
     `  --header ${posixSingleQuote('Content-Type: application/json')} \\`,
-    '  --data-binary @-',
+    `  --data-binary ${posixSingleQuote(envelope.requestJson)}`,
   ].join('\n');
 }
 

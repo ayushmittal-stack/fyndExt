@@ -540,7 +540,8 @@ test('rejects an over-limit pod input envelope before returning request bytes', 
 test('redacts both buyer fields in every diagnostic row while preserving non-identity fields', async () => {
   const requestJson = JSON.stringify([
     { TRAN_DOC_NO: DOCUMENT_NUMBER, CUST_NAME_WALKIN: BUYER_NAME, CUST_ADDITIONAL_ID_NO_WALKIN: BUYER_NATIONAL_ID, TRAN_TAX_CODE_CATEGORY: 'Z' },
-    { TRAN_DOC_NO: DOCUMENT_NUMBER, CUST_NAME_WALKIN: `${BUYER_NAME}-2`, CUST_ADDITIONAL_ID_NO_WALKIN: '1000000000', TRAN_TAX_RATE: '0.00' },
+    { TRAN_DOC_NO: DOCUMENT_NUMBER, CUST_NAME_WALKIN: `${BUYER_NAME}-2`, CUST_ADDITIONAL_ID_NO_WALKIN: null, CUST_ADDL_ID_TYP_WALKIN: 'NAT', TRAN_TAX_CODE_CATEGORY: 'S' },
+    { TRAN_DOC_NO: DOCUMENT_NUMBER, CUST_NAME_WALKIN: null, CUST_ADDITIONAL_ID_NO_WALKIN: '1000000000', CUST_ADDL_ID_TYP_WALKIN: 'NAT', TRAN_TAX_RATE: '15.00' },
   ]);
   const request = { jobId: JOB_ID, documentNumber: DOCUMENT_NUMBER, requestJson, requestHash: hash(requestJson) };
   const { service } = makeService(fakeRepository({ request }), { maxRequestBytes: Buffer.byteLength(requestJson) });
@@ -549,7 +550,8 @@ test('redacts both buyer fields in every diagnostic row while preserving non-ide
 
   expect(JSON.parse(result.rawJson)).toEqual([
     { TRAN_DOC_NO: DOCUMENT_NUMBER, CUST_NAME_WALKIN: '<redacted>', CUST_ADDITIONAL_ID_NO_WALKIN: '<redacted>', TRAN_TAX_CODE_CATEGORY: 'Z' },
-    { TRAN_DOC_NO: DOCUMENT_NUMBER, CUST_NAME_WALKIN: '<redacted>', CUST_ADDITIONAL_ID_NO_WALKIN: '<redacted>', TRAN_TAX_RATE: '0.00' },
+    { TRAN_DOC_NO: DOCUMENT_NUMBER, CUST_NAME_WALKIN: '<redacted>', CUST_ADDITIONAL_ID_NO_WALKIN: null, CUST_ADDL_ID_TYP_WALKIN: 'NAT', TRAN_TAX_CODE_CATEGORY: 'S' },
+    { TRAN_DOC_NO: DOCUMENT_NUMBER, CUST_NAME_WALKIN: null, CUST_ADDITIONAL_ID_NO_WALKIN: '<redacted>', CUST_ADDL_ID_TYP_WALKIN: 'NAT', TRAN_TAX_RATE: '15.00' },
   ]);
 });
 
@@ -617,7 +619,6 @@ test.each([
 
 test.each([
   ['array row', JSON.stringify([[DOCUMENT_NUMBER]])],
-  ['null buyer name', JSON.stringify([{ TRAN_DOC_NO: DOCUMENT_NUMBER, CUST_NAME_WALKIN: null }])],
   ['object buyer national ID', JSON.stringify([{ TRAN_DOC_NO: DOCUMENT_NUMBER, CUST_ADDITIONAL_ID_NO_WALKIN: {} }])],
 ])('fails closed before diagnostic serialization for malformed %s', async (_description, requestJson) => {
   const request = { jobId: JOB_ID, documentNumber: DOCUMENT_NUMBER, requestJson, requestHash: hash(requestJson) };

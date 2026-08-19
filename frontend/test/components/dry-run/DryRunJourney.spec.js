@@ -41,14 +41,13 @@ const POD_ENVELOPE = Object.freeze({
   apiKey: POD_API_KEY,
 });
 const EXPECTED_POD_CURL = [
-  "printf '%s' '[{\"NOTE\":\"O'\"'\"'Reilly $HOME `uname` $(id); * ? [x]\",\"UNICODE\":\"رياض\"}]' | curl --disable --silent --show-error --max-redirs 0 \\",
+  'curl --silent --show-error --max-redirs 0 \\',
   '  --request POST \\',
-  "  --noproxy '*' \\",
   "  --url 'https://oeis.example.test/root'\"'\"'quoted/$path;$(touch)/`whoami`/API/V2/Transaction/UpdateInvoiceData' \\",
   "  --header 'Authorization: APIkey live'\"'\"'key$HOME $(id) `uname`; * ?' \\",
   "  --header 'Connection: keep-alive' \\",
   "  --header 'Content-Type: application/json' \\",
-  '  --data-binary @-',
+  "  --data-binary '[{\"NOTE\":\"O'\"'\"'Reilly $HOME `uname` $(id); * ? [x]\",\"UNICODE\":\"رياض\"}]'",
 ].join('\n');
 const SECOND_POD_REQUEST_JSON = '[{"TRAN_DOC_NO":"VR-1","NOTE":"second O\'Reilly $HOME $(id) `uname`"}]';
 const SECOND_POD_API_KEY = "fresh'key$PATH $(false) `id`; []";
@@ -61,14 +60,13 @@ const SECOND_POD_ENVELOPE = Object.freeze({
   apiKey: SECOND_POD_API_KEY,
 });
 const EXPECTED_SECOND_POD_CURL = [
-  "printf '%s' '[{\"TRAN_DOC_NO\":\"VR-1\",\"NOTE\":\"second O'\"'\"'Reilly $HOME $(id) `uname`\"}]' | curl --disable --silent --show-error --max-redirs 0 \\",
+  'curl --silent --show-error --max-redirs 0 \\',
   '  --request POST \\',
-  "  --noproxy '*' \\",
   "  --url 'https://oeis.example.test/second'\"'\"'fresh/API/V2/Transaction/UpdateInvoiceData' \\",
   "  --header 'Authorization: APIkey fresh'\"'\"'key$PATH $(false) `id`; []' \\",
   "  --header 'Connection: keep-alive' \\",
   "  --header 'Content-Type: application/json' \\",
-  '  --data-binary @-',
+  "  --data-binary '[{\"TRAN_DOC_NO\":\"VR-1\",\"NOTE\":\"second O'\"'\"'Reilly $HOME $(id) `uname`\"}]'",
 ].join('\n');
 
 const jobs = [
@@ -1052,7 +1050,7 @@ describe('DryRunJourney', () => {
     expect(document.querySelector('textarea')).toBeNull();
   });
 
-  test('pipes a valid request above the exec argument limit through stdin without changing bytes', async () => {
+  test('copies even a large valid request in the requested direct data-binary format', async () => {
     const requestJson = JSON.stringify([{ NOTE: 'x'.repeat((128 * 1024) + 1) }]);
     const envelope = Object.freeze({
       method: 'POST',
@@ -1074,15 +1072,18 @@ describe('DryRunJourney', () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
     const copied = writeText.mock.calls[0][0];
     expect(envelope.byteCount).toBeGreaterThan(128 * 1024);
-    expect(copied.startsWith(`printf '%s' '${requestJson}' | curl --disable --silent --show-error --max-redirs 0 \\`))
+    expect(copied.startsWith('curl --silent --show-error --max-redirs 0 \\'))
       .toBe(true);
     expect(copied.indexOf(requestJson)).toBe(copied.lastIndexOf(requestJson));
-    expect(copied).toContain('  --data-binary @-');
+    expect(copied).toContain(`  --data-binary '${requestJson}'`);
+    expect(copied).not.toContain("printf '%s'");
+    expect(copied).not.toContain('| curl');
+    expect(copied).not.toContain('--data-binary @-');
     expect(container.textContent.includes(requestJson)).toBe(false);
     expect(document.querySelector('textarea')).toBeNull();
   });
 
-  test('disables curl configuration and proxy routing before targeting OEIS', async () => {
+  test('copies the direct OEIS curl layout without a stdin pipeline', async () => {
     const writeText = jest.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, 'clipboard', {
       configurable: true,
@@ -1093,13 +1094,9 @@ describe('DryRunJourney', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Copy pod cURL' }));
     await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
     const copied = writeText.mock.calls[0][0];
-    const curlInvocation = copied.slice(copied.indexOf('| curl ') + 2);
-    const noProxyIndex = curlInvocation.indexOf("  --noproxy '*' \\");
-    const urlIndex = curlInvocation.indexOf('  --url ');
-    expect(curlInvocation.startsWith('curl --disable --silent --show-error --max-redirs 0 \\'))
-      .toBe(true);
-    expect(noProxyIndex).toBeGreaterThan(-1);
-    expect(noProxyIndex).toBeLessThan(urlIndex);
+    expect(copied).toBe(EXPECTED_POD_CURL);
+    expect(copied).not.toContain('printf');
+    expect(copied).not.toContain('@-');
   });
 
   test('marks the copy action busy and ignores duplicate clicks while one fresh request is pending', async () => {

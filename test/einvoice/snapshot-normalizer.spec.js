@@ -55,8 +55,8 @@ test('normalizes only invoice-required fields from a bag_confirmed webhook', () 
       reasonCode: null,
       evidenceReference: 'evt-1',
       verifiedAt: '2026-08-10T06:30:00.000Z',
-      buyerName: null,
-      buyerNationalId: null,
+      buyerName: 'Synthetic Standard Buyer',
+      buyerNationalId: '1999999999',
     },
     bags: [{
       bagId: 'bag-1', lineNumber: 1, productCode: 'SKU-01', quantity: 1,
@@ -68,9 +68,68 @@ test('normalizes only invoice-required fields from a bag_confirmed webhook', () 
     }],
   });
   expect(result.shipment).not.toHaveProperty('user');
-  expect(JSON.stringify(result.shipment)).not.toContain('Synthetic Standard Buyer');
-  expect(JSON.stringify(result.shipment)).not.toContain('1999999999');
   expect(result.shipment.bags[0]).not.toHaveProperty('customer');
+});
+
+test.each([
+  ['name only', conditions => { delete conditions.national_id; }, {
+    buyerName: 'Synthetic Standard Buyer', buyerNationalId: null,
+  }],
+  ['National ID only', conditions => { delete conditions.recipient_name; }, {
+    buyerName: null, buyerNationalId: '1999999999',
+  }],
+  ['invalid optional identity', conditions => {
+    conditions.recipient_name = '   ';
+    conditions.national_id = 'private-invalid-id';
+  }, { buyerName: null, buyerNationalId: null }],
+])('preserves independently valid optional recipient identity for an S/15 candidate: %s',
+  (_description, change, expected) => {
+    const body = webhookWithShipment((shipment) => {
+      change(shipment.order.meta.custom_cart_meta.custom_conditions);
+    });
+
+    const result = normalizeShipmentWebhook({
+      eventName: 'application/shipment/update/v1', body, companyId: 12655, applicationId: 'app-1',
+    });
+
+    expect(result.shipment.taxEligibility).toEqual(expect.objectContaining(expected));
+    expect(JSON.stringify(result.shipment.taxEligibility)).not.toContain('private-invalid-id');
+  });
+
+test('builds an S/15 OEIS customer block from the valid Fynd recipient fields', () => {
+  const normalized = normalizeShipmentWebhook({
+    eventName: 'application/shipment/update/v1',
+    body: makeShipmentWebhook(), companyId: 12655, applicationId: 'app-1',
+  });
+
+  const result = buildOeisPayload(normalized.shipment, {
+    companyCode: 'COMPANY',
+    sourceErp: 'Fynd.com',
+    supplierCountryCode: 'SA',
+    amountTolerance: '0.01',
+    masterData: {
+      getBranch: code => ({ code }),
+      getProduct: code => ({
+        code, uqc: 'OTH', supplyClass: 'PRIVATE_HEALTHCARE_SERVICE',
+        allowedZeroRateReason: 'VATEX-SA-HEA',
+      }),
+    },
+    taxPolicyResolver: createTaxPolicyResolver({
+      policyVersion: '2026-08-17',
+      now: () => new Date('2026-08-10T12:00:00.000Z'),
+    }),
+  });
+
+  expect(result.rows).toEqual([
+    expect.objectContaining({
+      TRAN_TAX_CODE_CATEGORY: 'S',
+      TRAN_TAX_RATE: '15.00',
+      CUST_NAME_WALKIN: 'Synthetic Standard Buyer',
+      CUST_ADDITIONAL_ID_NO_WALKIN: '1999999999',
+      CUST_ADDL_ID_TYP_WALKIN: 'NAT',
+    }),
+  ]);
+  expect(JSON.parse(result.requestJson)).toEqual(result.rows);
 });
 
 test('normalizes the sanitized live Fynd shipment shape to the existing canonical snapshot', () => {

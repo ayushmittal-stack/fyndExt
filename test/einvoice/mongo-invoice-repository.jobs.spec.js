@@ -374,6 +374,134 @@ async function beginPendingLock(fixture, suffix = '1', dryRun = false) {
   return { started, job: await fixture.repository.getJob(prepared.id) };
 }
 
+describe('Mongo webhook tax-eligibility snapshot validation', () => {
+  test.each([
+    ['buyer identity', 'both', 'Standard Buyer', '1234223211'],
+    ['buyer name only', 'name', 'Standard Buyer', null],
+    ['buyer National ID only', 'national-id', null, '1234223211'],
+    ['no buyer identity', 'neither', null, null],
+  ])('accepts and preserves standard-rated eligibility with %s', async (
+    _label,
+    suffix,
+    buyerName,
+    buyerNationalId,
+  ) => {
+    const { harness, repository } = await readyFixture();
+    const shipment = normalizedShipment(`standard-${suffix}`);
+    shipment.taxEligibility = {
+      ...shipment.taxEligibility,
+      buyerName,
+      buyerNationalId,
+    };
+
+    const accepted = await repository.acceptWebhook(
+      eventRecord(`standard-${suffix}`), shipment,
+    );
+
+    const stored = findJob(harness, accepted.jobId);
+    expect(JSON.parse(stored.shipmentSnapshotJson).taxEligibility).toEqual({
+      governmentBorneVatEligible: false,
+      reasonCode: null,
+      evidenceReference: `event-standard-${suffix}`,
+      verifiedAt: '2026-08-17T09:58:00.000Z',
+      buyerName,
+      buyerNationalId,
+    });
+    await expect(repository.getJob(accepted.jobId)).resolves.toEqual(
+      expect.objectContaining({
+        shipmentSnapshot: expect.objectContaining({
+          taxEligibility: expect.objectContaining({ buyerName, buyerNationalId }),
+        }),
+      }),
+    );
+  });
+
+  test.each([
+    ['a healthcare reason', { reasonCode: 'VATEX-SA-HEA' }],
+    ['an empty buyer name', { buyerName: '' }],
+    ['a blank buyer name', { buyerName: '   ' }],
+    ['a control character in the buyer name', { buyerName: 'Standard\nBuyer' }],
+    ['a short National ID', { buyerNationalId: '123422321' }],
+    ['a long National ID', { buyerNationalId: '12342232110' }],
+    ['a non-ASCII National ID', { buyerNationalId: '١٢٣٤٢٢٣٢١١' }],
+    ['a numeric National ID', { buyerNationalId: 1234223211 }],
+  ])('rejects standard-rated eligibility with %s', async (_label, overrides) => {
+    const { harness, repository } = await readyFixture();
+    const shipment = normalizedShipment('invalid-standard');
+    shipment.taxEligibility = { ...shipment.taxEligibility, ...overrides };
+
+    await expect(repository.acceptWebhook(
+      eventRecord('invalid-standard'), shipment,
+    )).rejects.toEqual(safeError(
+      'REPOSITORY_INPUT_INVALID', 'Invoice repository input is invalid',
+    ));
+    expect(harness.documents('invoice_jobs')).toEqual([]);
+    expect(harness.documents('webhook_events')).toEqual([]);
+  });
+
+  test.each([
+    ['buyer name', { buyerName: 'Undecided Buyer' }],
+    ['buyer National ID', { buyerNationalId: '1234223211' }],
+  ])('requires null %s when eligibility is undecided', async (_label, overrides) => {
+    const { harness, repository } = await readyFixture();
+    const shipment = normalizedShipment('undecided');
+    shipment.taxEligibility = {
+      ...shipment.taxEligibility,
+      governmentBorneVatEligible: null,
+      ...overrides,
+    };
+
+    await expect(repository.acceptWebhook(
+      eventRecord('undecided'), shipment,
+    )).rejects.toEqual(safeError(
+      'REPOSITORY_INPUT_INVALID', 'Invoice repository input is invalid',
+    ));
+    expect(harness.documents('invoice_jobs')).toEqual([]);
+  });
+
+  test.each([
+    ['valid buyer identity', 'eligible-identity', 'Eligible Citizen', '1000000000'],
+    ['null buyer identity', 'eligible-null', null, null],
+  ])('keeps healthcare-eligible validation unchanged with %s', async (
+    _label,
+    suffix,
+    buyerName,
+    buyerNationalId,
+  ) => {
+    const { repository } = await readyFixture();
+    const shipment = normalizedShipment(suffix);
+    shipment.taxEligibility = {
+      ...shipment.taxEligibility,
+      governmentBorneVatEligible: true,
+      reasonCode: 'VATEX-SA-HEA',
+      buyerName,
+      buyerNationalId,
+    };
+
+    await expect(repository.acceptWebhook(eventRecord(suffix), shipment)).resolves.toEqual({
+      created: true,
+      jobId: 1,
+    });
+  });
+
+  test('keeps the healthcare reason mandatory for eligible snapshots', async () => {
+    const { harness, repository } = await readyFixture();
+    const shipment = normalizedShipment('eligible-no-reason');
+    shipment.taxEligibility = {
+      ...shipment.taxEligibility,
+      governmentBorneVatEligible: true,
+      reasonCode: null,
+    };
+
+    await expect(repository.acceptWebhook(
+      eventRecord('eligible-no-reason'), shipment,
+    )).rejects.toEqual(safeError(
+      'REPOSITORY_INPUT_INVALID', 'Invoice repository input is invalid',
+    ));
+    expect(harness.documents('invoice_jobs')).toEqual([]);
+  });
+});
+
 describe('Mongo job claim contract', () => {
   test.each([
     ['', LEASE_UNTIL],

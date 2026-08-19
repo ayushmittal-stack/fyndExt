@@ -284,6 +284,9 @@ function prepareLine({ snapshot, options, documentNumber, supplyDate, productCod
     ...(taxDecision.category === 'Z' ? {
       TRAN_VAT_EXEMPT_REASON_CODE: taxDecision.reasonCode,
       TRAN_VAT_EXEMPT_REASON_TEXT: taxDecision.reasonText,
+    } : {}),
+    ...(snapshot.taxEligibility.buyerName !== null
+      || snapshot.taxEligibility.buyerNationalId !== null ? {
       CUST_NAME_WALKIN: snapshot.taxEligibility.buyerName,
       CUST_ADDITIONAL_ID_NO_WALKIN: snapshot.taxEligibility.buyerNationalId,
       CUST_ADDL_ID_TYP_WALKIN: 'NAT',

@@ -116,6 +116,38 @@ test('resolves an explicit false decision to the frozen standard-rate result', (
   expect(Object.isFrozen(result)).toBe(true);
 });
 
+test('accepts independently optional valid recipient identity for a standard-rate decision', () => {
+  for (const candidate of [
+    eligibility({
+      governmentBorneVatEligible: false, reasonCode: null,
+      buyerName: 'Standard Buyer', buyerNationalId: null,
+    }),
+    eligibility({
+      governmentBorneVatEligible: false, reasonCode: null,
+      buyerName: null, buyerNationalId: '1999999999',
+    }),
+  ]) {
+    expect(resolver().resolveLineTax({
+      product: product(), eligibility: candidate, financialBreakup: standardFinancials(),
+    })).toEqual(expect.objectContaining({ category: 'S', rate: '15.00' }));
+  }
+});
+
+test.each([
+  ['blank optional name', '   ', null],
+  ['control-bearing optional name', 'Private\nName', null],
+  ['non-ASCII optional National ID', null, '١٩٩٩٩٩٩٩٩٩'],
+  ['wrong-length optional National ID', null, '199999999'],
+])('rejects a standard-rate decision with %s', (_description, buyerName, buyerNationalId) => {
+  expect(() => resolver().resolveLineTax({
+    product: product(),
+    eligibility: eligibility({
+      governmentBorneVatEligible: false, reasonCode: null, buyerName, buyerNationalId,
+    }),
+    financialBreakup: standardFinancials(),
+  })).toThrow(expect.objectContaining({ code: 'TAX_ELIGIBILITY_IDENTITY_REQUIRED' }));
+});
+
 test.each([
   ['missing', eligibility({ governmentBorneVatEligible: undefined })],
   ['null', eligibility({ governmentBorneVatEligible: null })],

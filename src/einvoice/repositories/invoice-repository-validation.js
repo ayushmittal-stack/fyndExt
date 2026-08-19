@@ -65,15 +65,17 @@ function normalizeTaxEligibility(value) {
   const verifiedAt = requireOwn(value, 'verifiedAt');
   const buyerName = requireOwn(value, 'buyerName');
   const buyerNationalId = requireOwn(value, 'buyerNationalId');
+  const validBuyerName = buyerName === null || (typeof buyerName === 'string'
+    && buyerName.trim() !== '' && !/[\u0000-\u001F\u007F-\u009F]/.test(buyerName));
+  const validBuyerNationalId = buyerNationalId === null
+    || (typeof buyerNationalId === 'string' && /^[0-9]{10}$/.test(buyerNationalId));
   if (![true, false, null].includes(decision)
       || typeof evidenceReference !== 'string' || evidenceReference === ''
       || !(verifiedAt === null || (typeof verifiedAt === 'string' && verifiedAt !== ''))
-      || (decision === true && (reasonCode !== 'VATEX-SA-HEA'
-        || !(buyerName === null || (typeof buyerName === 'string' && buyerName.trim() !== ''
-          && !/[\u0000-\u001F\u007F-\u009F]/.test(buyerName)))
-        || !(buyerNationalId === null
-          || (typeof buyerNationalId === 'string' && /^[0-9]{10}$/.test(buyerNationalId)))))
-      || (decision !== true && (reasonCode !== null || buyerName !== null || buyerNationalId !== null))) {
+      || (decision === true && reasonCode !== 'VATEX-SA-HEA')
+      || (decision !== true && reasonCode !== null)
+      || (decision !== null && (!validBuyerName || !validBuyerNationalId))
+      || (decision === null && (buyerName !== null || buyerNationalId !== null))) {
     fail('REPOSITORY_INPUT_INVALID', 'Invoice repository input is invalid');
   }
   return {
