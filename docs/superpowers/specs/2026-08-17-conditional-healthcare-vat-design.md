@@ -221,11 +221,12 @@ For `S/15`:
 The builder must not silently recompute or override Fynd amounts. A mismatch is
 a held invoice, not an OEIS submission.
 
-`INV_CUSTOMER_PAID_AMOUNT` and the OEIS `PREPAID_*` fields remain a separate
-contract gate. The previous dummy request was HTTP 200 but business-invalid
-because OEIS treated a positive customer-paid amount as prepayment. No further
-production submission is allowed until Thomson Reuters confirms the intended
-mapping and a controlled validation response has `IsValidated=true`.
+Controlled OEIS validation confirmed that `INV_CUSTOMER_PAID_AMOUNT` is a
+prepayment field rather than the Fynd payment-status total. A positive value
+requires the OEIS `PREPAID_*` contract and is business-invalid without that
+evidence. For the current non-prepayment flow, emit `0.00` there and place the
+full payable invoice total in `INV_CUSTOMER_AMOUNT_DUE`. The controlled request
+with that mapping produced an invoice number, QR code, UUID, and signed XML.
 
 ## Persistence and Retry Semantics
 
@@ -270,8 +271,8 @@ persisted request bytes and hash used by workflow and retries remain unchanged.
 ## Rollout Gates
 
 1. Preserve the approved exact-own Fynd mapping and its fail-closed validation.
-2. Obtain Thomson Reuters confirmation for `INV_CUSTOMER_PAID_AMOUNT` and
-   `PREPAID_*` semantics.
+2. Preserve the controlled-validation mapping for the current non-prepayment
+   flow: customer paid `0.00`, customer amount due equals the invoice total.
 3. Generate the new runtime classification registry offline; do not call OEIS
    Product Master.
 4. Implement and test the resolver, snapshot, persistence, builder, privacy,

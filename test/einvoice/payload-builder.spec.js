@@ -100,7 +100,7 @@ test('builds a bare B2C row array with hand-derived line and invoice totals', ()
     TRAN_NET_AMOUNT: '85.00', TRAN_TAX_CODE_CATEGORY: 'S', TRAN_TAX_RATE: '15.00',
     TRAN_TAX_AMOUNT: '12.75', TRAN_NET_PLUS_TAX: '97.75',
     INV_NET_AMOUNT: '200.00', INV_TOTAL_TAX_AMOUNT: '30.00', INV_TOTAL_AMOUNT: '230.00',
-    INV_CUSTOMER_PAID_AMOUNT: '230.00', INV_CUSTOMER_AMOUNT_DUE: '0.00', PAY_METHOD: '48',
+    INV_CUSTOMER_PAID_AMOUNT: '0.00', INV_CUSTOMER_AMOUNT_DUE: '230.00', PAY_METHOD: '48',
   });
   expect(result.rows[1]).toEqual(expect.objectContaining({
     TRAN_LINE_NO: 2, ERP_TRANSACTION_REF: 'VR-17861361389811907489-1_2', PRODUCT_CODE: 'SKU-02',
@@ -194,7 +194,8 @@ test.each([
     TRAN_TAX_AMOUNT: '0.00',
     TRAN_NET_PLUS_TAX: paidAmount,
     INV_TOTAL_AMOUNT: paidAmount,
-    INV_CUSTOMER_PAID_AMOUNT: paidAmount,
+    INV_CUSTOMER_PAID_AMOUNT: '0.00',
+    INV_CUSTOMER_AMOUNT_DUE: paidAmount,
   }));
 });
 
@@ -310,7 +311,8 @@ test('maps taxed delivery as one invoice-level charge without inflating the prod
     INV_NET_AMOUNT: '297.00',
     INV_TOTAL_TAX_AMOUNT: '44.55',
     INV_TOTAL_AMOUNT: '341.55',
-    INV_CUSTOMER_PAID_AMOUNT: '341.55',
+    INV_CUSTOMER_PAID_AMOUNT: '0.00',
+    INV_CUSTOMER_AMOUNT_DUE: '341.55',
   }));
   expect(result.rows[0]).not.toHaveProperty('TRAN_CHGS_AMOUNT');
   expect(result.rows[0]).not.toHaveProperty('INV_CHGS_PERCENT');

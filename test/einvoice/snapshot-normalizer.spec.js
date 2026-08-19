@@ -250,8 +250,8 @@ test('builds the exact OEIS row from the normalized sanitized live Fynd shipment
     INV_NET_AMOUNT: '33.37',
     INV_TOTAL_TAX_AMOUNT: '5.01',
     INV_TOTAL_AMOUNT: '38.38',
-    INV_CUSTOMER_PAID_AMOUNT: '38.38',
-    INV_CUSTOMER_AMOUNT_DUE: '0.00',
+    INV_CUSTOMER_PAID_AMOUNT: '0.00',
+    INV_CUSTOMER_AMOUNT_DUE: '38.38',
     PAY_METHOD: '48',
   }]);
   expect(JSON.parse(result.requestJson)).toEqual(result.rows);

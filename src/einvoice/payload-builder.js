@@ -384,8 +384,8 @@ function buildOeisPayload(snapshot, options) {
     INV_NET_AMOUNT: formatMoney(invoiceTotals.net),
     INV_TOTAL_TAX_AMOUNT: formatMoney(invoiceTotals.tax),
     INV_TOTAL_AMOUNT: formatMoney(invoiceTotals.paid),
-    INV_CUSTOMER_PAID_AMOUNT: formatMoney(invoiceTotals.paid),
-    INV_CUSTOMER_AMOUNT_DUE: '0.00',
+    INV_CUSTOMER_PAID_AMOUNT: '0.00',
+    INV_CUSTOMER_AMOUNT_DUE: formatMoney(invoiceTotals.paid),
     PAY_METHOD: '48',
   }));
   const requestJson = JSON.stringify(rows);
