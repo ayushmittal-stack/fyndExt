@@ -176,6 +176,20 @@ test.each([
     const xml = fixture.signedXml.replace('>9.58</cbc:Amount>', '>9.57</cbc:Amount>');
     fixture.body.ReportingApiResponse.SignedXmlEncoded = Buffer.from(xml).toString('base64');
   }],
+  ['signed delivery date', fixture => {
+    const xml = fixture.signedXml.replace(
+      '>2026-08-18</cbc:ActualDeliveryDate>',
+      '>2026-08-17</cbc:ActualDeliveryDate>',
+    );
+    fixture.body.ReportingApiResponse.SignedXmlEncoded = Buffer.from(xml).toString('base64');
+  }],
+  ['issuance before delivery', fixture => {
+    const xml = fixture.signedXml.replace(
+      '>2026-08-19</cbc:IssueDate>',
+      '>2026-08-17</cbc:IssueDate>',
+    );
+    fixture.body.ReportingApiResponse.SignedXmlEncoded = Buffer.from(xml).toString('base64');
+  }],
 ])('rejects a real response with conflicting %s', (_description, mutate) => {
   const fixture = makeLiveOeisSuccess();
   mutate(fixture);

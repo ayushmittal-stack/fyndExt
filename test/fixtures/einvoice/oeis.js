@@ -30,6 +30,7 @@ function makeLiveOeisSuccess() {
 <Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2">
   <cbc:ID>OEIS-INVOICE-1</cbc:ID><cbc:UUID>4245897A-8CA2-4F8E-8CFC-D431A587376B</cbc:UUID><cbc:IssueDate>2026-08-19</cbc:IssueDate><cbc:DocumentCurrencyCode>SAR</cbc:DocumentCurrencyCode>
   <cac:AdditionalDocumentReference><cbc:ID>ICV</cbc:ID><cbc:UUID>2530</cbc:UUID></cac:AdditionalDocumentReference>
+  <cac:Delivery><cbc:ActualDeliveryDate>2026-08-18</cbc:ActualDeliveryDate></cac:Delivery>
   <cac:PaymentMeans><cbc:PaymentMeansCode>48</cbc:PaymentMeansCode></cac:PaymentMeans>
   <cac:TaxTotal><cbc:TaxAmount currencyID="SAR">118.56</cbc:TaxAmount><cac:TaxSubtotal><cbc:TaxableAmount currencyID="SAR">790.42</cbc:TaxableAmount><cbc:TaxAmount currencyID="SAR">118.56</cbc:TaxAmount><cac:TaxCategory><cbc:ID>S</cbc:ID><cbc:Percent>15.00</cbc:Percent></cac:TaxCategory></cac:TaxSubtotal></cac:TaxTotal>
   <cac:LegalMonetaryTotal><cbc:LineExtensionAmount currencyID="SAR">790.42</cbc:LineExtensionAmount><cbc:TaxExclusiveAmount currencyID="SAR">790.42</cbc:TaxExclusiveAmount><cbc:TaxInclusiveAmount currencyID="SAR">908.98</cbc:TaxInclusiveAmount><cbc:PayableAmount currencyID="SAR">908.98</cbc:PayableAmount></cac:LegalMonetaryTotal>
@@ -48,7 +49,7 @@ function makeLiveOeisSuccess() {
       },
     },
     requestJson: JSON.stringify([{
-      TRAN_DOC_NO: 'VR-SOURCE-1', TRAN_LINE_NO: 1, TRAN_DOC_DATE: '20260819',
+      TRAN_DOC_NO: 'VR-SOURCE-1', TRAN_LINE_NO: 1, TRAN_DOC_DATE: '20260818', DATE_OF_SUPPLY: '20260818',
       INV_CURRENCY_CODE: 'SAR', VAT_CURRENCY_CODE: 'SAR', TRAN_QUANTITY: 1,
       TRAN_NET_AMOUNT: '790.42', TRAN_TAX_CODE_CATEGORY: 'S', TRAN_TAX_RATE: '15.00',
       TRAN_TAX_AMOUNT: '118.56', TRAN_DISC1_REASON_CODE: '95',

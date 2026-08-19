@@ -375,11 +375,16 @@ function transitionCompleteState(shipment, job, artifact, signedXml, invoiceNumb
         || !hasOwn(shipment.meta.einvoice_info.invoice, 'SignedQRCode')
         || !isPlainRecord(shipment.meta.xml)
         || !hasOwnFields(shipment.meta.xml, ['content', 'filename'])) return false;
+    const invoiceMetadata = shipment.meta.einvoice_info.invoice;
+    const invoiceIdentityMatches = shipment.invoiceId === invoiceNumber
+      || (shipment.invoiceId === job.documentNumber
+        && hasOwn(invoiceMetadata, 'InvoiceNumber')
+        && invoiceMetadata.InvoiceNumber === invoiceNumber);
     return shipment.shipmentId === job.shipmentId
       && fyndState(shipment) !== null
       && shipment.locked === false
-      && shipment.invoiceId === invoiceNumber
-      && shipment.meta.einvoice_info.invoice.SignedQRCode === artifact.qrCodeData
+      && invoiceIdentityMatches
+      && invoiceMetadata.SignedQRCode === artifact.qrCodeData
       && shipment.meta.xml.content === signedXml
       && shipment.meta.xml.filename === `${job.documentNumber}.xml`;
   } catch {

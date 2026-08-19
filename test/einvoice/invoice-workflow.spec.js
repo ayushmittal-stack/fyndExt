@@ -1390,9 +1390,9 @@ describe('invoice workflow outbox processing', () => {
 
   test.each([
     ['complete exact state', {
-      shipmentId: 'shipment-1', status: 'bag_invoiced', locked: false, invoiceId: OEIS_INVOICE,
+      shipmentId: 'shipment-1', status: 'bag_invoiced', locked: false, invoiceId: DOCUMENT,
       meta: {
-        einvoice_info: { invoice: { SignedQRCode: QR_CODE_DATA } },
+        einvoice_info: { invoice: { InvoiceNumber: OEIS_INVOICE, SignedQRCode: QR_CODE_DATA } },
         xml: { content: XML, filename: `${DOCUMENT}.xml` },
       },
     }, 'complete'],

@@ -147,6 +147,19 @@ function fixedMoney(value) {
   return value;
 }
 
+function fixedIsoDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) invalidResponse();
+  const milliseconds = Date.parse(`${value}T00:00:00.000Z`);
+  if (!Number.isFinite(milliseconds)
+      || new Date(milliseconds).toISOString().slice(0, 10) !== value) invalidResponse();
+  return value;
+}
+
+function compactDateToIso(value) {
+  if (typeof value !== 'string' || !/^\d{8}$/.test(value)) invalidResponse();
+  return fixedIsoDate(`${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6)}`);
+}
+
 function requestRows(requestJson, sourceDocumentNumber) {
   if (typeof requestJson !== 'string' || typeof sourceDocumentNumber !== 'string'
       || sourceDocumentNumber.trim() === '') invalidResponse();
@@ -164,8 +177,11 @@ function requestRows(requestJson, sourceDocumentNumber) {
     ]) fixedMoney(row[field]);
     if (row.INV_CUSTOMER_PAID_AMOUNT !== '0.00'
         || row.INV_CUSTOMER_AMOUNT_DUE !== row.INV_TOTAL_AMOUNT
-        || row.PAY_METHOD !== '48' || !/^[0-9]{8}$/.test(row.TRAN_DOC_DATE)
-        || !Number.isSafeInteger(row.TRAN_QUANTITY) || row.TRAN_QUANTITY < 1
+        || row.PAY_METHOD !== '48') invalidResponse();
+    compactDateToIso(row.TRAN_DOC_DATE);
+    compactDateToIso(row.DATE_OF_SUPPLY);
+    if (
+        !Number.isSafeInteger(row.TRAN_QUANTITY) || row.TRAN_QUANTITY < 1
         || !['S', 'Z'].includes(row.TRAN_TAX_CODE_CATEGORY)) invalidResponse();
     return row;
   });
@@ -216,6 +232,7 @@ function extractUblEvidence(signedXml) {
     invoiceNumber: one('Invoice/ID'),
     uuid: one('Invoice/UUID'),
     issueDate: one('Invoice/IssueDate'),
+    deliveryDate: one('Invoice/Delivery/ActualDeliveryDate'),
     currency: one('Invoice/DocumentCurrencyCode'),
     paymentMethod: one('Invoice/PaymentMeans/PaymentMeansCode'),
     net: one('Invoice/LegalMonetaryTotal/TaxExclusiveAmount'),
@@ -254,12 +271,14 @@ function parseLiveResponse(body, options) {
   validateUblInvoice(signedXml);
   const xml = extractUblEvidence(signedXml);
   const first = rows[0];
-  const issueDate = `${first.TRAN_DOC_DATE.slice(0, 4)}-${first.TRAN_DOC_DATE.slice(4, 6)}-${first.TRAN_DOC_DATE.slice(6)}`;
+  const issueDate = fixedIsoDate(xml.issueDate);
+  const deliveryDate = compactDateToIso(first.DATE_OF_SUPPLY);
   if (fixedMoney(envelope.TaxableAmount) !== first.INV_NET_AMOUNT
       || fixedMoney(envelope.TaxAmount) !== first.INV_TOTAL_TAX_AMOUNT
       || fixedMoney(envelope.TotalAmount) !== first.INV_TOTAL_AMOUNT
       || xml.invoiceNumber !== envelope.InvoiceNumber || xml.uuid !== envelope.UUID
-      || xml.issueDate !== issueDate || xml.currency !== 'SAR' || xml.paymentMethod !== first.PAY_METHOD
+      || fixedIsoDate(xml.deliveryDate) !== deliveryDate || issueDate < deliveryDate
+      || xml.currency !== 'SAR' || xml.paymentMethod !== first.PAY_METHOD
       || fixedMoney(xml.net) !== first.INV_NET_AMOUNT
       || fixedMoney(xml.tax) !== first.INV_TOTAL_TAX_AMOUNT
       || fixedMoney(xml.total) !== first.INV_TOTAL_AMOUNT

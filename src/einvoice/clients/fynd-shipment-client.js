@@ -98,12 +98,14 @@ function buildFyndTransitionRequest(input, qrCodeData, signedXml) {
           identifier: shipmentId,
           products: [],
           data_updates: {
-            products: [{ data: { store_invoice_id: invoiceNumber } }],
+            products: [{ data: { store_invoice_id: documentNumber } }],
             entities: [{
               data: {
-                store_invoice_id: invoiceNumber,
+                store_invoice_id: documentNumber,
                 meta: {
-                  einvoice_info: { invoice: { SignedQRCode: qrCodeData } },
+                  einvoice_info: {
+                    invoice: { InvoiceNumber: invoiceNumber, SignedQRCode: qrCodeData },
+                  },
                   xml: { content: signedXml, filename: `${documentNumber}.xml` },
                 },
               },
@@ -230,7 +232,7 @@ function assertTransitionSucceeded(result, shipmentId) {
 
   const shipment = matches[0];
   if (!is2xxStatus(shipment.status) || hasFailure(shipment, true) || !isObject(shipment.final_state)
-    || shipment.final_state.bag_invoiced !== 'bag_invoiced') {
+    || !['bag_invoiced', 'dp_assigned'].includes(shipment.final_state.bag_invoiced)) {
     fail('FYND_TRANSITION_RESPONSE_INVALID', 'Fynd transition response is invalid');
   }
   if (hasOwn(shipment.final_state, 'shipment_id')
@@ -288,7 +290,7 @@ function addBoolean(values, value) {
 }
 
 function addIdentifier(values, value) {
-  if (value === undefined) return;
+  if (value === undefined || value === null) return;
   if ((typeof value !== 'string' && !Number.isSafeInteger(value)) || String(value).trim() === '') {
     invalidShipmentResponse();
   }

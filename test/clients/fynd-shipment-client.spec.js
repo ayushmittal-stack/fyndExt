@@ -124,13 +124,14 @@ test('builds the exact fresh FDK transition template with only two deferred fiel
           identifier: '17861361389811907489',
           products: [],
           data_updates: {
-            products: [{ data: { store_invoice_id: '$OEIS_RESPONSE.InvoiceNumber' } }],
+            products: [{ data: { store_invoice_id: DOCUMENT_NUMBER } }],
             entities: [{
               data: {
-                store_invoice_id: '$OEIS_RESPONSE.InvoiceNumber',
+                store_invoice_id: DOCUMENT_NUMBER,
                 meta: {
                   einvoice_info: {
                     invoice: {
+                      InvoiceNumber: '$OEIS_RESPONSE.InvoiceNumber',
                       SignedQRCode: { $deferred: 'QRCodeData' },
                     },
                   },
@@ -235,12 +236,14 @@ test('transitions and unlocks with the exact Avis and Grindor metadata contract'
           identifier: SHIPMENT_ID,
           products: [],
           data_updates: {
-            products: [{ data: { store_invoice_id: OEIS_INVOICE_NUMBER } }],
+            products: [{ data: { store_invoice_id: DOCUMENT_NUMBER } }],
             entities: [{
               data: {
-                store_invoice_id: OEIS_INVOICE_NUMBER,
+                store_invoice_id: DOCUMENT_NUMBER,
                 meta: {
-                  einvoice_info: { invoice: { SignedQRCode: QR_CODE_DATA } },
+                  einvoice_info: {
+                    invoice: { InvoiceNumber: OEIS_INVOICE_NUMBER, SignedQRCode: QR_CODE_DATA },
+                  },
                   xml: { content: SIGNED_XML, filename: `${DOCUMENT_NUMBER}.xml` },
                 },
               },
@@ -257,6 +260,9 @@ test('transitions and unlocks with the exact Avis and Grindor metadata contract'
 
 test.each([
   ['the nested installed SDK result', nestedTransitionSuccess()],
+  ['the installed auto-advanced DP-assigned result', nestedTransitionSuccess({
+    final_state: { shipment_id: SHIPMENT_ID, bag_invoiced: 'dp_assigned' },
+  })],
   ['a flat statuses result with a string HTTP status', flatTransitionSuccess({ status: '200' })],
   ['a top-level flat shipment result', { shipments: [transitionResult()] }],
   ['an envelope success message', { ...nestedTransitionSuccess(), success: true, message: 'Transition accepted' }],
@@ -444,6 +450,33 @@ test('uses installed field fallbacks and never substitutes array custom metadata
     meta: undefined,
     responseStatus: null,
   });
+});
+
+test('treats null optional invoice aliases from a pre-invoice Fynd read-back as absent', async () => {
+  const platform = makePlatform({ shipmentResult: {
+    success: true,
+    shipments: [readShipment({
+      status: { status: 'bag_confirmed', current_shipment_status: 'bag_confirmed' },
+      shipment_status: 'bag_confirmed',
+      lock_status: true,
+      lock_details: undefined,
+      shipment_details: { lock_status: true },
+      invoice: { store_invoice_id: null },
+      gst_details: { store_invoice_id: null },
+      meta: undefined,
+    })],
+  } });
+  const { client } = makeClient(platform);
+
+  await expect(client.getShipment({ companyId: COMPANY_ID, shipmentId: SHIPMENT_ID }))
+    .resolves.toEqual({
+      shipmentId: SHIPMENT_ID,
+      status: 'bag_confirmed',
+      locked: true,
+      invoiceId: undefined,
+      meta: undefined,
+      responseStatus: null,
+    });
 });
 
 test.each([

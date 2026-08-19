@@ -156,6 +156,7 @@ test('maps eligible HEA product amounts while preserving standard-rated document
     INV_CHGS_VAT_AMOUNT: '4.50',
     INV_CHGS_REASON_CODE: 'DL',
     INV_CHGS_REASON_TEXT: 'Delivery',
+    INV_CHGS_PERCENT: '11.24',
     INV_CHGS_AMOUNT: '30.00',
     INV_NET_AMOUNT: '297.00',
     INV_TOTAL_TAX_AMOUNT: '4.50',
@@ -307,6 +308,7 @@ test('maps taxed delivery as one invoice-level charge without inflating the prod
     INV_CHGS_VAT_AMOUNT: '4.50',
     INV_CHGS_REASON_CODE: 'DL',
     INV_CHGS_REASON_TEXT: 'Delivery',
+    INV_CHGS_PERCENT: '11.24',
     INV_CHGS_AMOUNT: '30.00',
     INV_NET_AMOUNT: '297.00',
     INV_TOTAL_TAX_AMOUNT: '44.55',
@@ -315,7 +317,6 @@ test('maps taxed delivery as one invoice-level charge without inflating the prod
     INV_CUSTOMER_AMOUNT_DUE: '341.55',
   }));
   expect(result.rows[0]).not.toHaveProperty('TRAN_CHGS_AMOUNT');
-  expect(result.rows[0]).not.toHaveProperty('INV_CHGS_PERCENT');
 });
 
 test('allocates shipment delivery across bags but emits the invoice charge only once in totals', () => {
@@ -333,10 +334,12 @@ test('allocates shipment delivery across bags but emits the invoice charge only 
 
   expect(result.rows).toHaveLength(2);
   expect(result.rows[0]).toEqual(expect.objectContaining({
-    TRAN_NET_PLUS_TAX: '97.75', INV_CHGS_AMOUNT: '30.00', INV_TOTAL_AMOUNT: '264.50',
+    TRAN_NET_PLUS_TAX: '97.75', INV_CHGS_PERCENT: '15.00',
+    INV_CHGS_AMOUNT: '30.00', INV_TOTAL_AMOUNT: '264.50',
   }));
   expect(result.rows[1]).toEqual(expect.objectContaining({
-    TRAN_NET_PLUS_TAX: '132.25', INV_CHGS_AMOUNT: '30.00', INV_TOTAL_AMOUNT: '264.50',
+    TRAN_NET_PLUS_TAX: '132.25', INV_CHGS_PERCENT: '15.00',
+    INV_CHGS_AMOUNT: '30.00', INV_TOTAL_AMOUNT: '264.50',
   }));
 });
 
@@ -364,7 +367,37 @@ test('reconciles aggregate delivery VAT without rounding VAT independently per b
   expect(result.rows).toHaveLength(4);
   expect(result.rows.every(row => row.TRAN_NET_PLUS_TAX === '1.15')).toBe(true);
   expect(result.rows[0]).toEqual(expect.objectContaining({
-    INV_CHGS_AMOUNT: '0.12', INV_CHGS_VAT_AMOUNT: '0.02', INV_TOTAL_AMOUNT: '4.74',
+    INV_CHGS_PERCENT: '3.00', INV_CHGS_AMOUNT: '0.12',
+    INV_CHGS_VAT_AMOUNT: '0.02', INV_TOTAL_AMOUNT: '4.74',
+  }));
+});
+
+test('fails locally when OEIS two-decimal charge percentage cannot preserve the delivery amount', () => {
+  const snapshot = makeSnapshot();
+  snapshot.taxEligibility = {
+    governmentBorneVatEligible: true,
+    reasonCode: 'VATEX-SA-HEA',
+    evidenceReference: 'event-eligible-charge-rounding',
+    verifiedAt: '2026-08-10T06:30:00.000Z',
+    buyerName: 'Synthetic Citizen',
+    buyerNationalId: '1000000000',
+  };
+  snapshot.bags = [{
+    bagId: 'bag-charge-rounding', lineNumber: 1, productCode: 'SKU-01', quantity: 1,
+    financialBreakup: {
+      price_effective: '1000.00', promotion_effective_discount: '0.00', coupon_effective_discount: '0.00',
+      value_of_good: '1000.00', gst_tax_percentage: '0.00', gst_fee: '0.00',
+      amount_paid: '1001.41', delivery_charge: '1.23',
+    },
+    prices: { promotion_effective_discount: '0.00', coupon_effective_discount: '0.00' },
+  }];
+  snapshot.deliveryCharge = {
+    taxCategory: 'S', taxRate: '15.00', netAmount: '1.23', taxAmount: '0.18', paidAmount: '1.41',
+  };
+  snapshot.amountPaid = '1001.41';
+
+  expect(() => build(snapshot)).toThrow(expect.objectContaining({
+    code: 'SHIPMENT_DELIVERY_TOTAL_MISMATCH',
   }));
 });
 

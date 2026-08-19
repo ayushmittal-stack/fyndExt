@@ -7,6 +7,7 @@ const { formatMoney, parseMoney } = require('./decimal');
 const RIYADH_DATE_FORMAT = new Intl.DateTimeFormat('en-US', {
   timeZone: 'Asia/Riyadh', year: 'numeric', month: '2-digit', day: '2-digit',
 });
+const PERCENT_DECIMAL_SCALE = 100n;
 
 function fail(code, message) {
   throw new EinvoiceError(code, message);
@@ -105,6 +106,28 @@ function assertWithinTolerance(left, right, tolerance, code, message) {
   const difference = left - right;
   const absolute = difference < 0n ? -difference : difference;
   if (absolute > tolerance) fail(code, message);
+}
+
+function formatInvoiceChargePercent(chargeCents, productNetCents, tolerance) {
+  if (chargeCents <= 0n || productNetCents <= 0n) {
+    fail('SHIPMENT_DELIVERY_TOTAL_MISMATCH', 'Shipment delivery charge percentage cannot be calculated');
+  }
+  const scaledPercent = (
+    (chargeCents * 100n * PERCENT_DECIMAL_SCALE) + (productNetCents / 2n)
+  ) / productNetCents;
+  const representedChargeCents = (
+    (productNetCents * scaledPercent) + ((100n * PERCENT_DECIMAL_SCALE) / 2n)
+  ) / (100n * PERCENT_DECIMAL_SCALE);
+  assertWithinTolerance(
+    representedChargeCents,
+    chargeCents,
+    tolerance,
+    'SHIPMENT_DELIVERY_TOTAL_MISMATCH',
+    'Shipment delivery charge percentage does not reconcile',
+  );
+  return `${scaledPercent / PERCENT_DECIMAL_SCALE}.${String(
+    scaledPercent % PERCENT_DECIMAL_SCALE,
+  ).padStart(2, '0')}`;
 }
 
 function readLineFinancials(bag, tolerance) {
@@ -360,6 +383,9 @@ function buildOeisPayload(snapshot, options) {
     tax: totals.tax + prepared.line.taxCents,
     paid: totals.paid + prepared.line.paidCents,
   }), { net: 0n, tax: 0n, paid: 0n });
+  const deliveryPercent = deliveryCharge.paidCents === 0n
+    ? null
+    : formatInvoiceChargePercent(deliveryCharge.netCents, productTotals.net, tolerance);
   const invoiceTotals = {
     net: productTotals.net + deliveryCharge.netCents,
     tax: productTotals.tax + deliveryCharge.taxCents,
@@ -379,6 +405,7 @@ function buildOeisPayload(snapshot, options) {
       INV_CHGS_VAT_AMOUNT: formatMoney(deliveryCharge.taxCents),
       INV_CHGS_REASON_CODE: 'DL',
       INV_CHGS_REASON_TEXT: 'Delivery',
+      INV_CHGS_PERCENT: deliveryPercent,
       INV_CHGS_AMOUNT: formatMoney(deliveryCharge.netCents),
     }),
     INV_NET_AMOUNT: formatMoney(invoiceTotals.net),
