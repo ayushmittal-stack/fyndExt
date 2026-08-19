@@ -33,6 +33,7 @@ const MONGO_REPOSITORY_METHODS = Object.freeze([
   'listShipmentAuditHeadsForCompany',
   'listPreJobFailureHeadsForCompany',
   'listShipmentAuditEventsForCompany',
+  'importHeldOeisResponseAndEnqueue',
 ]);
 
 function mongoRepository() {

@@ -13,6 +13,7 @@ const REPOSITORY_METHODS = Object.freeze([
   'beginExternalOperation', 'findUnresolvedAuditOperation',
   'listShipmentAuditHeadsForCompany', 'listPreJobFailureHeadsForCompany',
   'listShipmentAuditEventsForCompany',
+  'importHeldOeisResponseAndEnqueue',
 ]);
 
 function deferred() {

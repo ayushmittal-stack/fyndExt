@@ -8,6 +8,7 @@ const {
 } = require('../../src/einvoice/clients/fynd-shipment-client');
 const {
   DOCUMENT_NUMBER,
+  QR_CODE_DATA,
   SHIPMENT_ID,
   SIGNED_XML,
   SIGNED_XML_BASE64,
@@ -18,6 +19,7 @@ const {
 } = require('../fixtures/einvoice/fynd');
 
 const COMPANY_ID = 12655;
+const OEIS_INVOICE_NUMBER = 'U_IN-119/2026/0000000001';
 
 function makePlatform({ lockResult = { success: true }, transitionResult: statusResult = nestedTransitionSuccess(), shipmentResult } = {}) {
   return {
@@ -39,7 +41,8 @@ function transitionInput() {
     companyId: COMPANY_ID,
     shipmentId: SHIPMENT_ID,
     documentNumber: DOCUMENT_NUMBER,
-    signedXmlBase64: SIGNED_XML_BASE64,
+    invoiceNumber: OEIS_INVOICE_NUMBER,
+    qrCodeData: QR_CODE_DATA,
     signedXml: SIGNED_XML,
   };
 }
@@ -121,19 +124,19 @@ test('builds the exact fresh FDK transition template with only two deferred fiel
           identifier: '17861361389811907489',
           products: [],
           data_updates: {
-            products: [{ data: { store_invoice_id: 'VR-17861361389811907489-1' } }],
+            products: [{ data: { store_invoice_id: '$OEIS_RESPONSE.InvoiceNumber' } }],
             entities: [{
               data: {
-                store_invoice_id: 'VR-17861361389811907489-1',
+                store_invoice_id: '$OEIS_RESPONSE.InvoiceNumber',
                 meta: {
                   einvoice_info: {
-                    SignedQRCode: { $deferred: 'ReportingApiResponse.SignedXmlEncoded' },
-                  },
-                  shipment_meta: {
-                    xml: {
-                      content: { $deferred: 'decoded ReportingApiResponse.SignedXmlEncoded' },
-                      filename: 'VR-17861361389811907489-1.xml',
+                    invoice: {
+                      SignedQRCode: { $deferred: 'QRCodeData' },
                     },
+                  },
+                  xml: {
+                    content: { $deferred: 'decoded ReportingApiResponse.SignedXmlEncoded' },
+                    filename: 'VR-17861361389811907489-1.xml',
                   },
                 },
               },
@@ -151,7 +154,7 @@ test('builds the exact fresh FDK transition template with only two deferred fiel
   expect(second).not.toBe(first);
   expect(second.body.statuses).not.toBe(first.body.statuses);
   first.body.statuses[0].shipments[0].data_updates.entities[0].data.meta
-    .einvoice_info.SignedQRCode.$deferred = 'changed';
+    .einvoice_info.invoice.SignedQRCode.$deferred = 'changed';
   expect(second).toEqual(expected);
   const serialized = JSON.stringify(second);
   expect((serialized.match(/\"\$deferred\"/g) || [])).toHaveLength(2);
@@ -209,7 +212,7 @@ test.each([
     .rejects.toEqual(expect.objectContaining({ name: 'EinvoiceError', code: 'FYND_LOCK_RESPONSE_INVALID', retryable: false }));
 });
 
-test('transitions and unlocks with the exact FDK payload, retaining signed data only in entity metadata', async () => {
+test('transitions and unlocks with the exact Avis and Grindor metadata contract', async () => {
   const platform = makePlatform();
   const { client, getPlatformClient } = makeClient(platform);
 
@@ -232,13 +235,13 @@ test('transitions and unlocks with the exact FDK payload, retaining signed data 
           identifier: SHIPMENT_ID,
           products: [],
           data_updates: {
-            products: [{ data: { store_invoice_id: DOCUMENT_NUMBER } }],
+            products: [{ data: { store_invoice_id: OEIS_INVOICE_NUMBER } }],
             entities: [{
               data: {
-                store_invoice_id: DOCUMENT_NUMBER,
+                store_invoice_id: OEIS_INVOICE_NUMBER,
                 meta: {
-                  einvoice_info: { SignedQRCode: SIGNED_XML_BASE64 },
-                  shipment_meta: { xml: { content: SIGNED_XML, filename: `${DOCUMENT_NUMBER}.xml` } },
+                  einvoice_info: { invoice: { SignedQRCode: QR_CODE_DATA } },
+                  xml: { content: SIGNED_XML, filename: `${DOCUMENT_NUMBER}.xml` },
                 },
               },
             }],
@@ -356,7 +359,7 @@ test('normalizes safe read-back metadata while retaining private reconciliation 
     status: 'bag_invoiced',
     locked: false,
     invoiceId: DOCUMENT_NUMBER,
-    meta: { einvoice_info: { SignedQRCode: SIGNED_XML_BASE64 } },
+    meta: { einvoice_info: { invoice: { SignedQRCode: QR_CODE_DATA } } },
     responseStatus: null,
   });
   expect(Object.keys(result)).toEqual([
@@ -399,7 +402,7 @@ test('accepts equal redundant status, lock, and invoice representations', async 
     status: 'bag_invoiced',
     locked: false,
     invoiceId: DOCUMENT_NUMBER,
-    meta: { einvoice_info: { SignedQRCode: SIGNED_XML_BASE64 } },
+    meta: { einvoice_info: { invoice: { SignedQRCode: QR_CODE_DATA } } },
     responseStatus: null,
   });
 });
@@ -465,7 +468,7 @@ test('ignores inherited reconciliation fields from a polluted Object.prototype',
     shipment_status: 'bag_invoiced',
     lock_status: false,
     store_invoice_id: DOCUMENT_NUMBER,
-    meta: { einvoice_info: { SignedQRCode: SIGNED_XML_BASE64 } },
+    meta: { einvoice_info: { invoice: { SignedQRCode: QR_CODE_DATA } } },
   };
   for (const [key, value] of Object.entries(inherited)) {
     Object.defineProperty(Object.prototype, key, { configurable: true, value });
@@ -646,7 +649,7 @@ test.each([
   ['a symbolic lock document number', 'lockShipment', { companyId: COMPANY_ID, shipmentId: SHIPMENT_ID, documentNumber: Symbol('document') }],
   ['null transition input', 'transitionToInvoiced', null],
   ['an object transition company id', 'transitionToInvoiced', { ...transitionInput(), companyId: {} }],
-  ['a symbolic signed XML base64 value', 'transitionToInvoiced', { ...transitionInput(), signedXmlBase64: Symbol('signed') }],
+  ['a symbolic QR value', 'transitionToInvoiced', { ...transitionInput(), qrCodeData: Symbol('qr') }],
   ['an object signed XML value', 'transitionToInvoiced', { ...transitionInput(), signedXml: {} }],
   ['null read-back input', 'getShipment', null],
   ['a symbolic read-back shipment id', 'getShipment', { companyId: COMPANY_ID, shipmentId: Symbol('shipment') }],

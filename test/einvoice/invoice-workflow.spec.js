@@ -16,12 +16,14 @@ const {
 const { createInvoiceWorkflow } = require('../../src/einvoice/invoice-workflow');
 
 const DOCUMENT = 'VR-shipment-1-1';
+const OEIS_INVOICE = 'U_IN-119/2026/0000000001';
 const WORKFLOW_NOW = new Date('2026-08-10T04:30:00.000Z');
 const LOCKED_AT = '2026-08-10T04:35:00.000Z';
 const LEASE_EXPIRES_AT = '2026-08-10T05:00:00.000Z';
 const XML = '<?xml version="1.0"?><Invoice>synthetic</Invoice>';
 const XML_BASE64 = Buffer.from(XML, 'utf8').toString('base64');
 const XML_HASH = crypto.createHash('sha256').update(Buffer.from(XML, 'utf8')).digest('hex');
+const QR_CODE_DATA = 'oeis-qr-code-data';
 
 function requestBytes(documentNumber = DOCUMENT) {
   return JSON.stringify([{
@@ -57,7 +59,7 @@ function artifact(overrides = {}) {
 }
 
 function storedArtifactRecord(overrides = {}) {
-  const stored = artifact({ jobId: 1, ...overrides });
+  const stored = artifact({ jobId: 1, qrCodeData: QR_CODE_DATA, ...overrides });
   delete stored.signedXml;
   return stored;
 }
@@ -100,7 +102,10 @@ function outbox(overrides = {}) {
     id: 8,
     jobId: 1,
     action: OUTBOX_ACTIONS.FYND_TRANSITION,
-    payload: { shipmentId: 'shipment-1', documentNumber: DOCUMENT },
+    payload: {
+      shipmentId: 'shipment-1', documentNumber: DOCUMENT,
+      oeisInvoiceNumber: OEIS_INVOICE,
+    },
     status: OUTBOX_STATUSES.PENDING,
     attemptCount: 1,
     leaseOwner: 'worker-a',
@@ -365,6 +370,7 @@ function createDeps({
   oeisResult,
   parsedArtifact,
   transitionResult,
+  constantNow = false,
 } = {}) {
   const repo = createRepository({ trace, initialJob, storedArtifact });
   const bytes = requestBytes();
@@ -426,7 +432,7 @@ function createDeps({
           };
       }),
     },
-    now: (() => {
+    now: constantNow ? jest.fn(() => new Date(WORKFLOW_NOW)) : (() => {
       let tick = 0;
       return jest.fn(() => new Date(WORKFLOW_NOW.getTime() + (tick++ * 10)));
     })(),
@@ -833,7 +839,7 @@ describe('invoice workflow job processing', () => {
 
   test('uses separate job and outbox claims to produce the complete success order', async () => {
     const trace = [];
-    const setup = createDeps({ trace });
+    const setup = createDeps({ trace, parsedArtifact: artifact({ qrCodeData: QR_CODE_DATA }) });
     const workflow = createInvoiceWorkflow(setup.deps);
 
     await workflow.processJob(job(), retryPlan());
@@ -1311,7 +1317,8 @@ describe('invoice workflow outbox processing', () => {
     expect(trace).toEqual(['fynd-transition', 'complete']);
     expect(setup.deps.fyndClient.transitionToInvoiced).toHaveBeenCalledWith({
       companyId: 'company-1', shipmentId: 'shipment-1', documentNumber: DOCUMENT,
-      signedXmlBase64: XML_BASE64, signedXml: XML,
+      invoiceNumber: OEIS_INVOICE,
+      qrCodeData: QR_CODE_DATA, signedXml: XML,
     });
     expect(setup.repository.completeOutboxAndJob).toHaveBeenCalledWith(
       8, 3, expect.any(Array),
@@ -1350,6 +1357,7 @@ describe('invoice workflow outbox processing', () => {
     ['noncanonical Base64', outbox(), storedArtifactRecord({ signedXmlBase64: `${XML_BASE64}\n` })],
     ['artifact hash', outbox(), storedArtifactRecord({ signedXmlSha256: '0'.repeat(64) })],
     ['artifact status', outbox(), storedArtifactRecord({ responseStatus: 'UNKNOWN' })],
+    ['missing QR data', outbox(), storedArtifactRecord({ qrCodeData: null })],
     ['artifact prototype', outbox(), withNonPlainPrototype(storedArtifactRecord())],
     ['inherited artifact job identity', outbox(), Object.assign(Object.create({ jobId: 1 }), artifact())],
   ])('marks stored outbox %s corruption indeterminate without calling Fynd', async (_case, claimed, stored) => {
@@ -1382,30 +1390,37 @@ describe('invoice workflow outbox processing', () => {
 
   test.each([
     ['complete exact state', {
-      shipmentId: 'shipment-1', status: 'bag_invoiced', locked: false, invoiceId: DOCUMENT,
+      shipmentId: 'shipment-1', status: 'bag_invoiced', locked: false, invoiceId: OEIS_INVOICE,
       meta: {
-        einvoice_info: { SignedQRCode: XML_BASE64 },
-        shipment_meta: { xml: { content: XML, filename: `${DOCUMENT}.xml` } },
+        einvoice_info: { invoice: { SignedQRCode: QR_CODE_DATA } },
+        xml: { content: XML, filename: `${DOCUMENT}.xml` },
+      },
+    }, 'complete'],
+    ['exact invoicing evidence after Fynd advances to DP assigned', {
+      shipmentId: 'shipment-1', status: 'dp_assigned', locked: false, invoiceId: OEIS_INVOICE,
+      meta: {
+        einvoice_info: { invoice: { SignedQRCode: QR_CODE_DATA } },
+        xml: { content: XML, filename: `${DOCUMENT}.xml` },
       },
     }, 'complete'],
     ['exact pre-state', { shipmentId: 'shipment-1', status: 'bag_confirmed', locked: true }, 'retry'],
     ['unlocked pre-state', { shipmentId: 'shipment-1', status: 'bag_confirmed', locked: false }, 'indeterminate'],
-    ['partial invoice state', { shipmentId: 'shipment-1', status: 'bag_invoiced', locked: false, invoiceId: DOCUMENT }, 'indeterminate'],
+    ['partial invoice state', { shipmentId: 'shipment-1', status: 'bag_invoiced', locked: false, invoiceId: OEIS_INVOICE }, 'indeterminate'],
     ['wrong invoice', {
       shipmentId: 'shipment-1', status: 'bag_invoiced', locked: false, invoiceId: 'other',
-      meta: { einvoice_info: { SignedQRCode: XML_BASE64 }, shipment_meta: { xml: { content: XML, filename: `${DOCUMENT}.xml` } } },
+      meta: { einvoice_info: { invoice: { SignedQRCode: QR_CODE_DATA } }, xml: { content: XML, filename: `${DOCUMENT}.xml` } },
     }, 'indeterminate'],
     ['wrong XML', {
-      shipmentId: 'shipment-1', status: 'bag_invoiced', locked: false, invoiceId: DOCUMENT,
-      meta: { einvoice_info: { SignedQRCode: XML_BASE64 }, shipment_meta: { xml: { content: 'other', filename: `${DOCUMENT}.xml` } } },
+      shipmentId: 'shipment-1', status: 'bag_invoiced', locked: false, invoiceId: OEIS_INVOICE,
+      meta: { einvoice_info: { invoice: { SignedQRCode: QR_CODE_DATA } }, xml: { content: 'other', filename: `${DOCUMENT}.xml` } },
     }, 'indeterminate'],
     ['wrong QR', {
-      shipmentId: 'shipment-1', status: 'bag_invoiced', locked: false, invoiceId: DOCUMENT,
-      meta: { einvoice_info: { SignedQRCode: 'other' }, shipment_meta: { xml: { content: XML, filename: `${DOCUMENT}.xml` } } },
+      shipmentId: 'shipment-1', status: 'bag_invoiced', locked: false, invoiceId: OEIS_INVOICE,
+      meta: { einvoice_info: { invoice: { SignedQRCode: 'other' } }, xml: { content: XML, filename: `${DOCUMENT}.xml` } },
     }, 'indeterminate'],
     ['wrong filename', {
-      shipmentId: 'shipment-1', status: 'bag_invoiced', locked: false, invoiceId: DOCUMENT,
-      meta: { einvoice_info: { SignedQRCode: XML_BASE64 }, shipment_meta: { xml: { content: XML, filename: 'other.xml' } } },
+      shipmentId: 'shipment-1', status: 'bag_invoiced', locked: false, invoiceId: OEIS_INVOICE,
+      meta: { einvoice_info: { invoice: { SignedQRCode: QR_CODE_DATA } }, xml: { content: XML, filename: 'other.xml' } },
     }, 'indeterminate'],
     ['failed readback', new EinvoiceError('FYND_NETWORK', 'raw', { retryable: true }), 'indeterminate'],
   ])('reconciles claimed outbox retry: %s', async (_case, shipmentRead, outcome) => {
@@ -1456,10 +1471,10 @@ describe('invoice workflow outbox processing', () => {
       initialJob: pendingJob(),
       transitionResult: new EinvoiceError('FYND_NETWORK', 'raw', { retryable: true }),
       shipmentRead: {
-        shipmentId: 'shipment-1', status: 'bag_invoiced', locked: false, invoiceId: DOCUMENT,
+        shipmentId: 'shipment-1', status: 'bag_invoiced', locked: false, invoiceId: OEIS_INVOICE,
         meta: {
-          einvoice_info: { SignedQRCode: XML_BASE64 },
-          shipment_meta: { xml: { content: XML, filename: `${DOCUMENT}.xml` } },
+          einvoice_info: { invoice: { SignedQRCode: QR_CODE_DATA } },
+          xml: { content: XML, filename: `${DOCUMENT}.xml` },
         },
       },
     });
@@ -1641,20 +1656,20 @@ describe('prototype and own-property hardening', () => {
 
   test.each([
     ['meta container', () => Object.create({
-      einvoice_info: { SignedQRCode: XML_BASE64 },
-      shipment_meta: { xml: { content: XML, filename: `${DOCUMENT}.xml` } },
+      einvoice_info: { invoice: { SignedQRCode: QR_CODE_DATA } },
+      xml: { content: XML, filename: `${DOCUMENT}.xml` },
     })],
     ['e-invoice container', () => ({
-      einvoice_info: Object.create({ SignedQRCode: XML_BASE64 }),
-      shipment_meta: { xml: { content: XML, filename: `${DOCUMENT}.xml` } },
+      einvoice_info: Object.create({ invoice: { SignedQRCode: QR_CODE_DATA } }),
+      xml: { content: XML, filename: `${DOCUMENT}.xml` },
     })],
-    ['shipment metadata container', () => ({
-      einvoice_info: { SignedQRCode: XML_BASE64 },
-      shipment_meta: Object.create({ xml: { content: XML, filename: `${DOCUMENT}.xml` } }),
+    ['invoice container', () => ({
+      einvoice_info: { invoice: Object.create({ SignedQRCode: QR_CODE_DATA }) },
+      xml: { content: XML, filename: `${DOCUMENT}.xml` },
     })],
     ['XML container', () => ({
-      einvoice_info: { SignedQRCode: XML_BASE64 },
-      shipment_meta: { xml: Object.create({ content: XML, filename: `${DOCUMENT}.xml` }) },
+      einvoice_info: { invoice: { SignedQRCode: QR_CODE_DATA } },
+      xml: Object.create({ content: XML, filename: `${DOCUMENT}.xml` }),
     })],
   ])('does not complete from inherited transition %s', async (_case, createMeta) => {
     const claimed = outbox({ status: OUTBOX_STATUSES.RETRY_WAIT, attemptCount: 2 });
@@ -1664,7 +1679,7 @@ describe('prototype and own-property hardening', () => {
         shipmentId: 'shipment-1',
         status: 'bag_invoiced',
         locked: false,
-        invoiceId: DOCUMENT,
+        invoiceId: OEIS_INVOICE,
         meta: createMeta(),
       },
     });
@@ -1686,17 +1701,17 @@ describe('prototype and own-property hardening', () => {
   });
 
   test.each([
-    ['SignedQRCode', 'SignedQRCode', XML_BASE64, () => ({
-      einvoice_info: {},
-      shipment_meta: { xml: { content: XML, filename: `${DOCUMENT}.xml` } },
+    ['SignedQRCode', 'SignedQRCode', QR_CODE_DATA, () => ({
+      einvoice_info: { invoice: {} },
+      xml: { content: XML, filename: `${DOCUMENT}.xml` },
     })],
     ['XML content', 'content', XML, () => ({
-      einvoice_info: { SignedQRCode: XML_BASE64 },
-      shipment_meta: { xml: { filename: `${DOCUMENT}.xml` } },
+      einvoice_info: { invoice: { SignedQRCode: QR_CODE_DATA } },
+      xml: { filename: `${DOCUMENT}.xml` },
     })],
     ['XML filename', 'filename', `${DOCUMENT}.xml`, () => ({
-      einvoice_info: { SignedQRCode: XML_BASE64 },
-      shipment_meta: { xml: { content: XML } },
+      einvoice_info: { invoice: { SignedQRCode: QR_CODE_DATA } },
+      xml: { content: XML },
     })],
   ])('does not complete from inherited transition %s leaf', async (
     _case, property, value, createMeta,
@@ -1714,7 +1729,7 @@ describe('prototype and own-property hardening', () => {
         shipmentId: 'shipment-1',
         status: 'bag_invoiced',
         locked: false,
-        invoiceId: DOCUMENT,
+        invoiceId: OEIS_INVOICE,
         meta: createMeta(),
       },
     });
@@ -1950,10 +1965,10 @@ describe('over-limit retry control', () => {
     const setup = createDeps({
       initialJob: transitionPendingJob(),
       shipmentRead: {
-        shipmentId: 'shipment-1', status: 'bag_invoiced', locked: false, invoiceId: DOCUMENT,
+        shipmentId: 'shipment-1', status: 'bag_invoiced', locked: false, invoiceId: OEIS_INVOICE,
         meta: {
-          einvoice_info: { SignedQRCode: XML_BASE64 },
-          shipment_meta: { xml: { content: XML, filename: `${DOCUMENT}.xml` } },
+          einvoice_info: { invoice: { SignedQRCode: QR_CODE_DATA } },
+          xml: { content: XML, filename: `${DOCUMENT}.xml` },
         },
       },
     });
@@ -2578,10 +2593,10 @@ describe('Task 8 audit protocol', () => {
       initialJob: transitionPendingJob(),
       shipmentRead: {
         shipmentId: 'shipment-1', status: 'bag_invoiced', locked: false,
-        invoiceId: DOCUMENT,
+        invoiceId: OEIS_INVOICE,
         meta: {
-          einvoice_info: { SignedQRCode: XML_BASE64 },
-          shipment_meta: { xml: { content: XML, filename: `${DOCUMENT}.xml` } },
+          einvoice_info: { invoice: { SignedQRCode: QR_CODE_DATA } },
+          xml: { content: XML, filename: `${DOCUMENT}.xml` },
         },
       },
     });
@@ -2602,6 +2617,31 @@ describe('Task 8 audit protocol', () => {
     expect(new Set(events.map(event => event.occurredAt)).size).toBe(1);
     expect(JSON.stringify(events)).not.toContain(XML);
     expect(JSON.stringify(events)).not.toContain(XML_BASE64);
+  });
+
+  test('recovers a pending transition when consecutive native clock reads share one millisecond', async () => {
+    const claimed = outbox({ status: OUTBOX_STATUSES.RETRY_WAIT, attemptCount: 2, version: 6 });
+    const recovery = pendingRecovery(claimed, {
+      targetKind: 'OUTBOX', stage: 'FYND_TRANSITION', action: 'FYND_TRANSITION_REQUESTED',
+    });
+    const setup = createDeps({
+      constantNow: true,
+      initialJob: transitionPendingJob(),
+      shipmentRead: {
+        shipmentId: 'shipment-1', status: 'bag_invoiced', locked: false,
+        invoiceId: OEIS_INVOICE,
+        meta: {
+          einvoice_info: { invoice: { SignedQRCode: QR_CODE_DATA } },
+          xml: { content: XML, filename: `${DOCUMENT}.xml` },
+        },
+      },
+    });
+    setup.repository.findUnresolvedAuditOperation.mockResolvedValueOnce(recovery);
+
+    await expect(createInvoiceWorkflow(setup.deps).processOutbox(claimed, retryPlan()))
+      .resolves.toEqual(expect.anything());
+    expect(setup.deps.fyndClient.getShipment).toHaveBeenCalledTimes(1);
+    expect(setup.repository.completeOutboxAndJob).toHaveBeenCalledTimes(1);
   });
 
   test('records corrupt artifact/outbox state as one privacy-safe OUTBOX terminal event', async () => {

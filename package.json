@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "import:held-oeis-response": "node scripts/import-held-oeis-response.js",
     "start": "npm run start:dev",
     "start:dev": "nodemon index.js",
     "start:prod": "NODE_ENV=production node index.js",

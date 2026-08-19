@@ -3,7 +3,9 @@
 const crypto = require('crypto');
 const { EinvoiceError } = require('../../src/einvoice/errors');
 const { parseOeisB2cResponse } = require('../../src/einvoice/response-parser');
-const { SIGNED_XML, SIGNED_XML_BASE64, makeOeisB2cSuccess } = require('../fixtures/einvoice/oeis');
+const {
+  SIGNED_XML, SIGNED_XML_BASE64, makeLiveOeisSuccess, makeOeisB2cSuccess,
+} = require('../fixtures/einvoice/oeis');
 
 function expectRejected(body, forbidden = []) {
   try {
@@ -127,3 +129,61 @@ test('preserves optional QRCodeData when it is present', () => {
 
   expect(parseOeisB2cResponse(body).qrCodeData).toBe('qr-data');
 });
+
+test('accepts the real OEIS envelope and binds its signed invoice to the exact source request', () => {
+  const fixture = makeLiveOeisSuccess();
+  const result = parseOeisB2cResponse(fixture.body, {
+    sourceDocumentNumber: 'VR-SOURCE-1', requestJson: fixture.requestJson,
+  });
+
+  expect(result).toEqual(expect.objectContaining({
+    sourceDocumentNumber: 'VR-SOURCE-1',
+    invoiceNumber: 'VR-SOURCE-1',
+    oeisInvoiceNumber: 'OEIS-INVOICE-1',
+    transactionNumber: '260800000004',
+    uuid: '4245897A-8CA2-4F8E-8CFC-D431A587376B',
+    invoiceCounter: '2530',
+    matchingKey: 'matching-key-1',
+    responseStatus: 'OEIS_ACCEPTED_REPORTING_PENDING',
+    signedXml: fixture.signedXml,
+    qrCodeData: 'qr-data',
+    responseJson: JSON.stringify(fixture.body),
+    responseByteCount: Buffer.byteLength(JSON.stringify(fixture.body), 'utf8'),
+    responseSha256: crypto.createHash('sha256').update(JSON.stringify(fixture.body)).digest('hex'),
+  }));
+});
+
+test.each([
+  ['source identity', fixture => { fixture.requestJson = fixture.requestJson.replace('VR-SOURCE-1', 'VR-OTHER'); }],
+  ['envelope total', fixture => { fixture.body.TotalAmount = 908.97; }],
+  ['signed invoice identity', fixture => {
+    const xml = fixture.signedXml.replace('OEIS-INVOICE-1', 'OEIS-INVOICE-2');
+    fixture.body.ReportingApiResponse.SignedXmlEncoded = Buffer.from(xml).toString('base64');
+  }],
+  ['signed UUID', fixture => {
+    const xml = fixture.signedXml.replace('4245897A-8CA2-4F8E-8CFC-D431A587376B', '5245897A-8CA2-4F8E-8CFC-D431A587376B');
+    fixture.body.ReportingApiResponse.SignedXmlEncoded = Buffer.from(xml).toString('base64');
+  }],
+  ['signed payable total', fixture => {
+    const xml = fixture.signedXml.replace('>908.98</cbc:PayableAmount>', '>908.97</cbc:PayableAmount>');
+    fixture.body.ReportingApiResponse.SignedXmlEncoded = Buffer.from(xml).toString('base64');
+  }],
+  ['payment method', fixture => {
+    const xml = fixture.signedXml.replace('>48</cbc:PaymentMeansCode>', '>10</cbc:PaymentMeansCode>');
+    fixture.body.ReportingApiResponse.SignedXmlEncoded = Buffer.from(xml).toString('base64');
+  }],
+  ['line discount', fixture => {
+    const xml = fixture.signedXml.replace('>9.58</cbc:Amount>', '>9.57</cbc:Amount>');
+    fixture.body.ReportingApiResponse.SignedXmlEncoded = Buffer.from(xml).toString('base64');
+  }],
+])('rejects a real response with conflicting %s', (_description, mutate) => {
+  const fixture = makeLiveOeisSuccess();
+  mutate(fixture);
+  expectRejectedWithExpected(fixture.body, fixture.requestJson);
+});
+
+function expectRejectedWithExpected(body, requestJson) {
+  expect(() => parseOeisB2cResponse(body, {
+    sourceDocumentNumber: 'VR-SOURCE-1', requestJson,
+  })).toThrow(expect.objectContaining({ code: 'OEIS_SIGNED_XML_INVALID' }));
+}

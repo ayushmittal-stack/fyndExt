@@ -704,6 +704,73 @@ function validatePreparedRequestInput(requestJson, requestHash) {
   return { requestJson, requestHash };
 }
 
+function validateHeldRequestCorrection(previousJson, correctedJson, documentNumber) {
+  let previous;
+  let corrected;
+  try {
+    previous = JSON.parse(previousJson);
+    corrected = JSON.parse(correctedJson);
+  } catch {
+    throw inputError();
+  }
+  if (!Array.isArray(previous) || !Array.isArray(corrected) || previous.length === 0
+      || previous.length !== corrected.length) throw inputError();
+  for (let index = 0; index < previous.length; index += 1) {
+    const before = previous[index];
+    const after = corrected[index];
+    if (!isPlainOwnDataRecord(before) || !isPlainOwnDataRecord(after)) throw inputError();
+    const beforeKeys = Reflect.ownKeys(before);
+    const afterKeys = Reflect.ownKeys(after);
+    if (beforeKeys.length !== afterKeys.length
+        || beforeKeys.some((key, keyIndex) => key !== afterKeys[keyIndex])
+        || after.TRAN_DOC_NO !== documentNumber
+        || after.INV_CUSTOMER_PAID_AMOUNT !== '0.00'
+        || after.INV_CUSTOMER_AMOUNT_DUE !== after.INV_TOTAL_AMOUNT) throw inputError();
+    for (const key of beforeKeys) {
+      if (!['INV_CUSTOMER_PAID_AMOUNT', 'INV_CUSTOMER_AMOUNT_DUE'].includes(key)
+          && !sameStoredValue(before[key], after[key])) throw inputError();
+    }
+  }
+}
+
+function isPlainOwnDataRecord(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value) || types.isProxy(value)) {
+    return false;
+  }
+  try {
+    return Object.getPrototypeOf(value) === Object.prototype
+      && Reflect.ownKeys(value).every(key => typeof key === 'string'
+        && Object.prototype.hasOwnProperty.call(
+          Object.getOwnPropertyDescriptor(value, key) || {}, 'value',
+        ));
+  } catch {
+    return false;
+  }
+}
+
+function prepareResponseEvidence(value) {
+  const input = readRequiredOwnDataInput(value, [
+    'attemptNumber', 'httpStatus', 'responseJson', 'responseByteCount',
+    'responseSha256', 'oeisInvoiceNumber',
+  ]).snapshot;
+  if (!Number.isSafeInteger(input.attemptNumber) || input.attemptNumber < 1
+      || input.httpStatus < 200 || input.httpStatus > 299
+      || typeof input.responseJson !== 'string'
+      || !Number.isSafeInteger(input.responseByteCount) || input.responseByteCount < 2
+      || input.responseByteCount > 2_097_152
+      || Buffer.byteLength(input.responseJson, 'utf8') !== input.responseByteCount
+      || typeof input.responseSha256 !== 'string' || !SHA256_PATTERN.test(input.responseSha256)
+      || createHash('sha256').update(input.responseJson, 'utf8').digest('hex') !== input.responseSha256
+      || !isPrintableIdentifier(input.oeisInvoiceNumber, 512)) throw inputError();
+  try {
+    if (!isPlainOwnDataRecord(JSON.parse(input.responseJson))) throw inputError();
+  } catch (error) {
+    if (SAFE_ERRORS.has(error)) throw error;
+    throw inputError();
+  }
+  return input;
+}
+
 function validateSafeErrorInput(errorCode, safeMessage) {
   if (typeof errorCode !== 'string' || !SAFE_CODE_PATTERN.test(errorCode)
       || typeof safeMessage !== 'string' || safeMessage.trim() === ''
@@ -1383,10 +1450,24 @@ function parseStoredOutboxPayload(value) {
   } catch {
     throw dataError();
   }
-  const row = storedSubdocument(payload, ['shipmentId', 'documentNumber']);
+  const hasOeisInvoiceNumber = Object.prototype.hasOwnProperty.call(
+    payload, 'oeisInvoiceNumber',
+  );
+  const row = storedSubdocument(payload, hasOeisInvoiceNumber
+    ? ['shipmentId', 'documentNumber', 'oeisInvoiceNumber']
+    : ['shipmentId', 'documentNumber']);
   if (!isPrintableIdentifier(row.shipmentId, 512)
-      || !isPrintableIdentifier(row.documentNumber, 512)) throw dataError();
-  return deepFreeze({ shipmentId: row.shipmentId, documentNumber: row.documentNumber });
+      || !isPrintableIdentifier(row.documentNumber, 512)
+      || (hasOeisInvoiceNumber && !isPrintableIdentifier(row.oeisInvoiceNumber, 512))) {
+    throw dataError();
+  }
+  return deepFreeze(hasOeisInvoiceNumber
+    ? {
+      shipmentId: row.shipmentId,
+      documentNumber: row.documentNumber,
+      oeisInvoiceNumber: row.oeisInvoiceNumber,
+    }
+    : { shipmentId: row.shipmentId, documentNumber: row.documentNumber });
 }
 
 function mapOutbox(document) {
@@ -4135,11 +4216,13 @@ function createMongoInvoiceRepository(options = {}) {
     outboxReference,
     expectedVersion,
     auditEvents = [],
+    responseEvidence = null,
   ) {
     return register(async () => {
       const validated = validateJobIdAndVersion(jobId, expectedVersion);
       const preparedArtifact = prepareArtifactInput(artifact, outboxReference);
       const events = encodeMutationAuditArray(auditEvents);
+      const evidence = responseEvidence === null ? null : prepareResponseEvidence(responseEvidence);
       const capturedNow = readClock(now);
       return runMutationTransaction(async session => {
         const record = await loadJobForMutation(session, validated.encodedJobId);
@@ -4155,6 +4238,9 @@ function createMongoInvoiceRepository(options = {}) {
           capturedNow,
         );
         if (!(record.row.lockedAt instanceof Date)) throw versionConflictError();
+        if (evidence !== null && evidence.attemptNumber !== record.job.attemptCount) {
+          throw versionConflictError();
+        }
         assertStoredPreparedRequest(record.row);
         const clearsPending = validateEnqueueAuditBundle(
           events,
@@ -4173,6 +4259,9 @@ function createMongoInvoiceRepository(options = {}) {
         const payloadJson = JSON.stringify({
           shipmentId: record.job.shipmentId,
           documentNumber: record.job.documentNumber,
+          oeisInvoiceNumber: evidence === null
+            ? preparedArtifact.artifact.invoiceNumber
+            : evidence.oeisInvoiceNumber,
         });
         const parentVersion = expectedVersion + 1;
         const outboxDocument = {
@@ -4195,8 +4284,24 @@ function createMongoInvoiceRepository(options = {}) {
           parentVersion,
           pendingOperation: null,
         };
+        const responseDocument = evidence === null ? null : {
+          jobId: validated.encodedJobId,
+          attemptNumber: evidence.attemptNumber,
+          outcome: 'SUCCESS',
+          httpStatus: evidence.httpStatus,
+          responseJson: evidence.responseJson,
+          responseByteCount: evidence.responseByteCount,
+          responseSha256: evidence.responseSha256,
+          oeisInvoiceNumber: evidence.oeisInvoiceNumber,
+          responseIdentity: `SUCCESS:${evidence.oeisInvoiceNumber}`,
+          receivedAt: capturedNow,
+          expiresAt: new Date(capturedNow.getTime() + AUDIT_RETENTION_MS),
+        };
         try {
           await insertDocument('invoice_artifacts', artifactDocument, session);
+          if (responseDocument !== null) {
+            await insertDocument('oeis_response_attempts', responseDocument, session);
+          }
           await insertDocument('invoice_outbox', outboxDocument, session);
         } catch (error) {
           if (hasMongoCode(error, 11000)) throw versionConflictError();
@@ -4255,6 +4360,153 @@ function createMongoInvoiceRepository(options = {}) {
             || storedOutbox.jobId !== updated.job.id
             || storedOutbox.id !== outboxId) throw dataError();
         await persistAuditEvents(session, events, capturedNow);
+        return deepFreeze({ job: updated.job, outbox: storedOutbox });
+      });
+    });
+  }
+
+  function importHeldOeisResponseAndEnqueue(input) {
+    return register(async () => {
+      const values = readRequiredOwnDataInput(input, [
+        'companyId', 'shipmentId', 'jobId', 'expectedVersion', 'previousRequestHash',
+        'correctedRequestJson', 'correctedRequestHash', 'artifact', 'responseEvidence',
+      ]).snapshot;
+      if (!isPrintableIdentifier(values.companyId, 512)
+          || !isPrintableIdentifier(values.shipmentId, 512)
+          || typeof values.previousRequestHash !== 'string'
+          || !SHA256_PATTERN.test(values.previousRequestHash)) throw inputError();
+      const validated = validateJobIdAndVersion(values.jobId, values.expectedVersion);
+      const corrected = validatePreparedRequestInput(
+        values.correctedRequestJson, values.correctedRequestHash,
+      );
+      const evidence = prepareResponseEvidence(values.responseEvidence);
+      const artifactInvoiceNumber = ownDataValue(values.artifact, 'invoiceNumber');
+      const preparedArtifact = prepareArtifactInput(values.artifact, {
+        shipmentId: values.shipmentId,
+        documentNumber: artifactInvoiceNumber,
+      });
+      const capturedNow = readClock(now);
+      return runMutationTransaction(async session => {
+        const record = await loadJobForMutation(session, validated.encodedJobId);
+        if (record.job.companyId !== values.companyId
+            || record.job.shipmentId !== values.shipmentId
+            || record.job.version !== values.expectedVersion
+            || record.job.state !== JOB_STATES.SUBMISSION_HELD
+            || record.row.requestHash !== values.previousRequestHash
+            || record.row.leaseOwner !== null || record.row.leaseExpiresAt !== null
+            || record.pendingOperation !== null || !(record.row.lockedAt instanceof Date)
+            || preparedArtifact.reference.documentNumber !== record.job.documentNumber
+            || preparedArtifact.artifact.invoiceNumber !== record.job.documentNumber
+            || evidence.attemptNumber !== record.job.attemptCount) throw versionConflictError();
+        assertStoredPreparedRequest(record.row);
+        validateHeldRequestCorrection(
+          record.row.oeisRequestJson, corrected.requestJson, record.job.documentNumber,
+        );
+
+        const outboxId = await allocateOutboxId(session);
+        const parentVersion = values.expectedVersion + 1;
+        const artifactDocument = {
+          jobId: validated.encodedJobId,
+          ...preparedArtifact.artifact,
+          createdAt: capturedNow,
+        };
+        const responseDocument = {
+          jobId: validated.encodedJobId,
+          attemptNumber: evidence.attemptNumber,
+          outcome: 'SUCCESS',
+          httpStatus: evidence.httpStatus,
+          responseJson: evidence.responseJson,
+          responseByteCount: evidence.responseByteCount,
+          responseSha256: evidence.responseSha256,
+          oeisInvoiceNumber: evidence.oeisInvoiceNumber,
+          responseIdentity: `SUCCESS:${evidence.oeisInvoiceNumber}`,
+          receivedAt: capturedNow,
+          expiresAt: new Date(capturedNow.getTime() + AUDIT_RETENTION_MS),
+        };
+        const payloadJson = JSON.stringify({
+          shipmentId: record.job.shipmentId,
+          documentNumber: record.job.documentNumber,
+          oeisInvoiceNumber: evidence.oeisInvoiceNumber,
+        });
+        const outboxDocument = {
+          outboxId: encodePositiveLong(outboxId),
+          jobId: validated.encodedJobId,
+          action: OUTBOX_ACTIONS.FYND_TRANSITION,
+          payloadJson,
+          status: OUTBOX_STATUSES.PENDING,
+          attemptCount: 0,
+          dueAt: capturedNow,
+          nextAttemptAt: capturedNow,
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          lastErrorCode: null,
+          lastErrorMessage: null,
+          version: 0,
+          createdAt: capturedNow,
+          completedAt: null,
+          parentState: JOB_STATES.FYND_TRANSITION_PENDING,
+          parentVersion,
+          pendingOperation: null,
+        };
+        try {
+          await insertDocument('invoice_artifacts', artifactDocument, session);
+          await insertDocument('oeis_response_attempts', responseDocument, session);
+          await insertDocument('invoice_outbox', outboxDocument, session);
+        } catch (error) {
+          if (hasMongoCode(error, 11000)) throw versionConflictError();
+          throw error;
+        }
+        const updatedDocument = await collectionCall('invoice_jobs', 'findOneAndUpdate', [
+          {
+            jobId: record.row.jobId,
+            companyId: values.companyId,
+            shipmentId: values.shipmentId,
+            version: values.expectedVersion,
+            state: JOB_STATES.SUBMISSION_HELD,
+            oeisRequestJson: record.row.oeisRequestJson,
+            requestHash: values.previousRequestHash,
+            lockedAt: record.row.lockedAt,
+            leaseOwner: null,
+            leaseExpiresAt: null,
+            pendingOperation: null,
+          },
+          {
+            $set: {
+              oeisRequestJson: corrected.requestJson,
+              requestHash: corrected.requestHash,
+              state: JOB_STATES.FYND_TRANSITION_PENDING,
+              dueAt: record.row.createdAt,
+              nextAttemptAt: null,
+              lastErrorCode: null,
+              lastErrorMessage: null,
+              updatedAt: capturedNow,
+            },
+            $inc: { version: 1 },
+          },
+          { returnDocument: 'after', includeResultMetadata: false, session },
+        ]);
+        if (updatedDocument === null) throw versionConflictError();
+        const updated = decodeJobRecord(updatedDocument);
+        assertExpectedPostImage(updated.row, record.row, {
+          oeisRequestJson: corrected.requestJson,
+          requestHash: corrected.requestHash,
+          state: JOB_STATES.FYND_TRANSITION_PENDING,
+          dueAt: record.row.createdAt,
+          nextAttemptAt: null,
+          lastErrorCode: null,
+          lastErrorMessage: null,
+          version: parentVersion,
+          updatedAt: capturedNow,
+        });
+        const event = buildInternalJobAudit(record.job, values.expectedVersion, capturedNow, {
+          stage: 'MIGRATION', action: 'LEGACY_STATE_IMPORTED', outcome: 'SUCCESS',
+        });
+        await persistAuditEvents(session, [event], capturedNow);
+        const storedArtifact = mapArtifact(artifactDocument);
+        const storedOutbox = mapOutbox(outboxDocument);
+        if (storedArtifact.jobId !== updated.job.id || storedOutbox.jobId !== updated.job.id) {
+          throw dataError();
+        }
         return deepFreeze({ job: updated.job, outbox: storedOutbox });
       });
     });
@@ -5368,6 +5620,7 @@ function createMongoInvoiceRepository(options = {}) {
     savePreparedRequest,
     markShipmentLocked,
     markOeisAcceptedAndEnqueue,
+    importHeldOeisResponseAndEnqueue,
     scheduleJobRetry,
     markJobFailed,
     markJobIndeterminate,

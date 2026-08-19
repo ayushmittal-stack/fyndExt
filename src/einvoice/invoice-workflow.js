@@ -341,8 +341,11 @@ function pristineMetadata(record) {
   if (!hasOwn(record, 'meta') || record.meta === undefined || record.meta === null) return true;
   if (!isPlainRecord(record.meta)) return false;
   if (inheritedField(record.meta, 'einvoice_info')
+      || inheritedField(record.meta, 'xml')
       || inheritedField(record.meta, 'shipment_meta')) return false;
-  return !hasOwn(record.meta, 'einvoice_info') && !hasOwn(record.meta, 'shipment_meta');
+  return !hasOwn(record.meta, 'einvoice_info')
+    && !hasOwn(record.meta, 'xml')
+    && !hasOwn(record.meta, 'shipment_meta');
 }
 
 function pristineLockState(shipment, job, locked) {
@@ -360,32 +363,32 @@ function pristineLockState(shipment, job, locked) {
   }
 }
 
-function transitionCompleteState(shipment, job, artifact, signedXml) {
+function transitionCompleteState(shipment, job, artifact, signedXml, invoiceNumber) {
   try {
     if (!isPlainRecord(shipment)
         || !hasOwnFields(shipment, ['shipmentId', 'status', 'locked', 'invoiceId', 'meta'])
         || !isPlainRecord(shipment.meta)
-        || !hasOwnFields(shipment.meta, ['einvoice_info', 'shipment_meta'])
+        || !hasOwnFields(shipment.meta, ['einvoice_info', 'xml'])
         || !isPlainRecord(shipment.meta.einvoice_info)
-        || !hasOwn(shipment.meta.einvoice_info, 'SignedQRCode')
-        || !isPlainRecord(shipment.meta.shipment_meta)
-        || !hasOwn(shipment.meta.shipment_meta, 'xml')
-        || !isPlainRecord(shipment.meta.shipment_meta.xml)
-        || !hasOwnFields(shipment.meta.shipment_meta.xml, ['content', 'filename'])) return false;
+        || !hasOwn(shipment.meta.einvoice_info, 'invoice')
+        || !isPlainRecord(shipment.meta.einvoice_info.invoice)
+        || !hasOwn(shipment.meta.einvoice_info.invoice, 'SignedQRCode')
+        || !isPlainRecord(shipment.meta.xml)
+        || !hasOwnFields(shipment.meta.xml, ['content', 'filename'])) return false;
     return shipment.shipmentId === job.shipmentId
-      && shipment.status === 'bag_invoiced'
+      && fyndState(shipment) !== null
       && shipment.locked === false
-      && shipment.invoiceId === job.documentNumber
-      && shipment.meta.einvoice_info.SignedQRCode === artifact.signedXmlBase64
-      && shipment.meta.shipment_meta.xml.content === signedXml
-      && shipment.meta.shipment_meta.xml.filename === `${job.documentNumber}.xml`;
+      && shipment.invoiceId === invoiceNumber
+      && shipment.meta.einvoice_info.invoice.SignedQRCode === artifact.qrCodeData
+      && shipment.meta.xml.content === signedXml
+      && shipment.meta.xml.filename === `${job.documentNumber}.xml`;
   } catch {
     return false;
   }
 }
 
-function classifyTransitionReadback(shipment, job, artifact, signedXml) {
-  if (transitionCompleteState(shipment, job, artifact, signedXml)) return 'complete';
+function classifyTransitionReadback(shipment, job, artifact, signedXml, invoiceNumber) {
+  if (transitionCompleteState(shipment, job, artifact, signedXml, invoiceNumber)) return 'complete';
   if (pristineLockState(shipment, job, true)) return 'pre';
   return 'indeterminate';
 }
@@ -399,6 +402,8 @@ function decodeArtifact(artifact, job, { stored }) {
         ])
         || (stored && (!hasOwn(artifact, 'jobId')
           || !Number.isSafeInteger(artifact.jobId) || artifact.jobId !== job.id))
+        || (stored && (!hasOwn(artifact, 'qrCodeData')
+          || !isNonemptyString(artifact.qrCodeData)))
         || artifact.invoiceNumber !== job.documentNumber
         || !isNonemptyString(artifact.transactionNumber)
         || !isNonemptyString(artifact.uuid)
@@ -512,15 +517,23 @@ function validAuditParentForOutbox(job, outbox) {
 
 function validOutboxPayload(outbox) {
   try {
-    return outbox.action === OUTBOX_ACTIONS.FYND_TRANSITION
-      && isPlainRecord(outbox.payload)
-      && Object.keys(outbox.payload).length === 2
+    if (outbox.action !== OUTBOX_ACTIONS.FYND_TRANSITION
+        || !isPlainRecord(outbox.payload)) return false;
+    const hasOeisInvoiceNumber = hasOwn(outbox.payload, 'oeisInvoiceNumber');
+    return Object.keys(outbox.payload).length === (hasOeisInvoiceNumber ? 3 : 2)
       && hasOwnFields(outbox.payload, ['shipmentId', 'documentNumber'])
       && isNonemptyString(outbox.payload.shipmentId)
-      && isNonemptyString(outbox.payload.documentNumber);
+      && isNonemptyString(outbox.payload.documentNumber)
+      && (!hasOeisInvoiceNumber || isNonemptyString(outbox.payload.oeisInvoiceNumber));
   } catch {
     return false;
   }
+}
+
+function outboxInvoiceNumber(outbox) {
+  return hasOwn(outbox.payload, 'oeisInvoiceNumber')
+    ? outbox.payload.oeisInvoiceNumber
+    : outbox.payload.documentNumber;
 }
 
 function repositoryDataError() {
@@ -549,6 +562,16 @@ function readWorkflowClock(now) {
     if (error instanceof EinvoiceError) throw error;
     fail('AUDIT_CLOCK_INVALID', 'Shipment audit clock is invalid');
   }
+}
+
+function readWorkflowClockAfter(now, previous) {
+  const sampled = readWorkflowClock(now);
+  if (sampled.getTime() > previous.getTime()) return sampled;
+  const next = previous.getTime() + 1;
+  if (!Number.isSafeInteger(next) || next > 8_640_000_000_000_000) {
+    fail('AUDIT_CLOCK_INVALID', 'Shipment audit clock is invalid');
+  }
+  return new Date(next);
 }
 
 function auditBundleAt(inputs, occurredAt) {
@@ -1192,10 +1215,7 @@ function createInvoiceWorkflow(deps = {}) {
       expectedParentVersion: job.version, attemptNumber: job.attemptCount,
       stage: 'FYND_LOCK', action: 'FYND_LOCK_READBACK',
     });
-    const readbackStartedAt = readWorkflowClock(now);
-    if (readbackStartedAt.getTime() <= originalCompletedAt.getTime()) {
-      fail('AUDIT_CLOCK_INVALID', 'Shipment audit clock is invalid');
-    }
+    const readbackStartedAt = readWorkflowClockAfter(now, originalCompletedAt);
     const readbackRequest = sanitizeFyndSummary('REQUEST', {
       operation: 'LOCK_READBACK', shipmentId: job.shipmentId,
       documentNumber: job.documentNumber, requestedLock: null, requestedStatus: null,
@@ -1215,10 +1235,7 @@ function createInvoiceWorkflow(deps = {}) {
     } catch (error) {
       readbackCode = safeCode(error, 'FYND_REQUEST_FAILED');
     }
-    const completedAt = readWorkflowClock(now);
-    if (completedAt.getTime() <= readbackStartedAt.getTime()) {
-      fail('AUDIT_CLOCK_INVALID', 'Shipment audit clock is invalid');
-    }
+    const completedAt = readWorkflowClockAfter(now, readbackStartedAt);
     let classification = 'UNREADABLE';
     let locked = null;
     let shipmentState = null;
@@ -1592,7 +1609,10 @@ function createInvoiceWorkflow(deps = {}) {
           || response.responseByteCount !== null || response.responseSha256 !== null) {
         throw new EinvoiceError('OEIS_UNKNOWN_RESULT', 'OEIS result is invalid');
       }
-      accepted = await parseResponse(response.body);
+      accepted = await parseResponse(response.body, {
+        sourceDocumentNumber: operationJob.documentNumber,
+        requestJson: operationJob.oeisRequestJson,
+      });
     } catch (error) {
       const code = safeCode(error, 'OEIS_UNKNOWN_RESULT');
       const latencyMs = completedAt.getTime() - Date.parse(operation.recovery.startedAt);
@@ -1659,13 +1679,25 @@ function createInvoiceWorkflow(deps = {}) {
         responseSummary: summaries.artifactSummary, artifactJobId: operationJob.id,
       }),
     ], completedAt);
-    return repository.markOeisAcceptedAndEnqueue(
+    const responseEvidence = isNonemptyString(accepted.responseJson)
+      && isNonemptyString(accepted.oeisInvoiceNumber)
+      ? {
+          attemptNumber: operationJob.attemptCount,
+          httpStatus: response.httpStatus,
+          responseJson: accepted.responseJson,
+          responseByteCount: accepted.responseByteCount,
+          responseSha256: accepted.responseSha256,
+          oeisInvoiceNumber: accepted.oeisInvoiceNumber,
+        } : null;
+    const argumentsForEnqueue = [
       operationJob.id,
       artifactForStorage,
       { shipmentId: operationJob.shipmentId, documentNumber: operationJob.documentNumber },
       operationJob.version,
       auditEvents,
-    );
+    ];
+    if (responseEvidence !== null) argumentsForEnqueue.push(responseEvidence);
+    return repository.markOeisAcceptedAndEnqueue(...argumentsForEnqueue);
   }
 
   async function processJob(claimedJob, retryPlan) {
@@ -1749,15 +1781,13 @@ function createInvoiceWorkflow(deps = {}) {
   async function reconcileTransition(
     outbox, job, artifact, signedXml, plan, recovery, originalCompletedAt, originalCode,
   ) {
+    const invoiceNumber = outboxInvoiceNumber(outbox);
     const readbackOperationKey = createOperationKey({
       targetKind: 'OUTBOX', targetId: String(outbox.id),
       expectedParentVersion: outbox.version, attemptNumber: outbox.attemptCount,
       stage: 'FYND_TRANSITION', action: 'FYND_TRANSITION_READBACK',
     });
-    const readbackStartedAt = readWorkflowClock(now);
-    if (readbackStartedAt.getTime() <= originalCompletedAt.getTime()) {
-      fail('AUDIT_CLOCK_INVALID', 'Shipment audit clock is invalid');
-    }
+    const readbackStartedAt = readWorkflowClockAfter(now, originalCompletedAt);
     const readbackRequest = sanitizeFyndSummary('REQUEST', {
       operation: 'TRANSITION_READBACK', shipmentId: job.shipmentId,
       documentNumber: job.documentNumber, requestedLock: null, requestedStatus: null,
@@ -1777,10 +1807,7 @@ function createInvoiceWorkflow(deps = {}) {
     } catch (error) {
       readbackCode = safeCode(error, 'FYND_REQUEST_FAILED');
     }
-    const completedAt = readWorkflowClock(now);
-    if (completedAt.getTime() <= readbackStartedAt.getTime()) {
-      fail('AUDIT_CLOCK_INVALID', 'Shipment audit clock is invalid');
-    }
+    const completedAt = readWorkflowClockAfter(now, readbackStartedAt);
     let classification = 'UNREADABLE';
     let locked = null;
     let shipmentState = null;
@@ -1792,7 +1819,9 @@ function createInvoiceWorkflow(deps = {}) {
       readable = true;
       locked = typeof shipment.locked === 'boolean' ? shipment.locked : null;
       shipmentState = fyndState(shipment);
-      const state = classifyTransitionReadback(shipment, job, artifact, signedXml);
+      const state = classifyTransitionReadback(
+        shipment, job, artifact, signedXml, invoiceNumber,
+      );
       classification = state === 'complete' ? 'INVOICED'
         : (state === 'pre' ? 'UNCHANGED' : 'CONFLICTING');
     }
@@ -1937,7 +1966,8 @@ function createInvoiceWorkflow(deps = {}) {
         companyId: job.companyId,
         shipmentId: job.shipmentId,
         documentNumber: job.documentNumber,
-        signedXmlBase64: storedArtifact.signedXmlBase64,
+        invoiceNumber: outboxInvoiceNumber(current),
+        qrCodeData: storedArtifact.qrCodeData,
         signedXml,
       });
       if (!isPlainRecord(transitionResult)

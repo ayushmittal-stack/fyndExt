@@ -4,6 +4,7 @@ const SHIPMENT_ID = '17861361389811907489';
 const DOCUMENT_NUMBER = 'VR-17861361389811907489-1';
 const SIGNED_XML = '<ubl:Invoice><cbc:ID>VR-17861361389811907489-1</cbc:ID></ubl:Invoice>';
 const SIGNED_XML_BASE64 = 'PHVibDpJbnZvaWNlPjxjYmM6SUQ+VlItMTc4NjEzNjEzODk4MTE5MDc0ODktMTwvY2JjOklEPjwvdWJsOkludm9pY2U+';
+const QR_CODE_DATA = 'oeis-qr-code-data';
 
 function transitionResult(overrides = {}) {
   return {
@@ -39,7 +40,7 @@ function readShipment(overrides = {}) {
     lock_details: { lock_status: true },
     invoice: { store_invoice_id: DOCUMENT_NUMBER },
     gst_details: { store_invoice_id: 'legacy-invoice-id' },
-    meta: { einvoice_info: { SignedQRCode: SIGNED_XML_BASE64 } },
+    meta: { einvoice_info: { invoice: { SignedQRCode: QR_CODE_DATA } } },
     custom_meta: [{ customer_internal_note: 'Customer Name' }],
     user: { name: 'Customer Name', phone: '+966500000000' },
     payment_info: [{ mode: 'CARD', card_number: '4111111111111111' }],
@@ -50,6 +51,7 @@ function readShipment(overrides = {}) {
 
 module.exports = {
   DOCUMENT_NUMBER,
+  QR_CODE_DATA,
   SHIPMENT_ID,
   SIGNED_XML,
   SIGNED_XML_BASE64,

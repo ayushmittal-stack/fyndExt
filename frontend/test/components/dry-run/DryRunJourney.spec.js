@@ -236,23 +236,23 @@ function detailFor(jobId = 42, requestHash = REQUEST_HASH) {
                     identifier: job.shipmentId,
                     products: [],
                     data_updates: {
-                      products: [{ data: { store_invoice_id: job.documentNumber } }],
+                      products: [{ data: { store_invoice_id: '$OEIS_RESPONSE.InvoiceNumber' } }],
                       entities: [{
                         data: {
-                          store_invoice_id: job.documentNumber,
+                          store_invoice_id: '$OEIS_RESPONSE.InvoiceNumber',
                           meta: {
                             einvoice_info: {
-                              SignedQRCode: {
-                                $deferred: 'ReportingApiResponse.SignedXmlEncoded',
+                              invoice: {
+                                SignedQRCode: {
+                                  $deferred: 'QRCodeData',
+                                },
                               },
                             },
-                            shipment_meta: {
-                              xml: {
-                                content: {
-                                  $deferred: 'decoded ReportingApiResponse.SignedXmlEncoded',
-                                },
-                                filename: `${job.documentNumber}.xml`,
+                            xml: {
+                              content: {
+                                $deferred: 'decoded ReportingApiResponse.SignedXmlEncoded',
                               },
+                              filename: `${job.documentNumber}.xml`,
                             },
                           },
                         },
@@ -913,9 +913,9 @@ describe('DryRunJourney', () => {
     const renderedTransition = JSON.parse(within(transitionPanel).getByRole('code').textContent);
     const transitionShipment = renderedTransition.body.statuses[0].shipments[0];
     expect(transitionShipment.data_updates.products).toEqual([{
-      data: { store_invoice_id: PRIMARY_DOCUMENT_NUMBER },
+      data: { store_invoice_id: '$OEIS_RESPONSE.InvoiceNumber' },
     }]);
-    expect(transitionShipment.data_updates.entities[0].data.meta.shipment_meta.xml.filename)
+    expect(transitionShipment.data_updates.entities[0].data.meta.xml.filename)
       .toBe(`${PRIMARY_DOCUMENT_NUMBER}.xml`);
     const oeisPanel = screen.getByRole('region', { name: 'OEIS diagnostic request' });
     expect(oeisPanel).toHaveTextContent('POST');
@@ -938,7 +938,7 @@ describe('DryRunJourney', () => {
     expect(screen.getByText(/real shipment is locked/i)).toBeInTheDocument();
     expect(screen.getByText(/manual cleanup is required/i)).toBeInTheDocument();
     expect(container.querySelectorAll('.dry-run-deferred')).toHaveLength(2);
-    expect(screen.getByText('ReportingApiResponse.SignedXmlEncoded')).toBeInTheDocument();
+    expect(screen.getByText('QRCodeData')).toBeInTheDocument();
     expect(screen.getByText('decoded ReportingApiResponse.SignedXmlEncoded')).toBeInTheDocument();
 
     ['approve', 'resume', 'submit', 'unlock'].forEach(label => {

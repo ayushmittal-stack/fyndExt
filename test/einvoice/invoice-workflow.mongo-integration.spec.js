@@ -106,7 +106,7 @@ function acceptedArtifact(job) {
     signedXmlBase64: SIGNED_XML_BASE64,
     signedXml: SIGNED_XML,
     signedXmlSha256: XML_SHA256,
-    qrCodeData: null,
+    qrCodeData: 'oeis-qr-code-data',
   };
 }
 

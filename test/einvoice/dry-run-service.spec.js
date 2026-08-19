@@ -286,19 +286,19 @@ test('builds the exact safe held journey from validated persisted bytes', async 
                 identifier: '17861361389811907489',
                 products: [],
                 data_updates: {
-                  products: [{ data: { store_invoice_id: 'VR-17861361389811907489-1' } }],
+                  products: [{ data: { store_invoice_id: '$OEIS_RESPONSE.InvoiceNumber' } }],
                   entities: [{
                     data: {
-                      store_invoice_id: 'VR-17861361389811907489-1',
+                      store_invoice_id: '$OEIS_RESPONSE.InvoiceNumber',
                       meta: {
                         einvoice_info: {
-                          SignedQRCode: { $deferred: 'ReportingApiResponse.SignedXmlEncoded' },
-                        },
-                        shipment_meta: {
-                          xml: {
-                            content: { $deferred: 'decoded ReportingApiResponse.SignedXmlEncoded' },
-                            filename: 'VR-17861361389811907489-1.xml',
+                          invoice: {
+                            SignedQRCode: { $deferred: 'QRCodeData' },
                           },
+                        },
+                        xml: {
+                          content: { $deferred: 'decoded ReportingApiResponse.SignedXmlEncoded' },
+                          filename: 'VR-17861361389811907489-1.xml',
                         },
                       },
                     },

@@ -77,14 +77,15 @@ function buildFyndLockRequest(input) {
   };
 }
 
-function buildFyndTransitionRequest(input, signedXmlBase64, signedXml) {
-  const { shipmentId, documentNumber } = ownDataInput(
+function buildFyndTransitionRequest(input, qrCodeData, signedXml) {
+  const { shipmentId, documentNumber, invoiceNumber } = ownDataInput(
     input,
-    ['shipmentId', 'documentNumber'],
+    ['shipmentId', 'documentNumber', 'invoiceNumber'],
     'FYND_TRANSITION_REQUEST_INVALID',
   );
   requireIdentifier(shipmentId, 'FYND_TRANSITION_REQUEST_INVALID');
   requireIdentifier(documentNumber, 'FYND_TRANSITION_REQUEST_INVALID');
+  requireIdentifier(invoiceNumber, 'FYND_TRANSITION_REQUEST_INVALID');
   return {
     body: {
       task: false,
@@ -97,15 +98,13 @@ function buildFyndTransitionRequest(input, signedXmlBase64, signedXml) {
           identifier: shipmentId,
           products: [],
           data_updates: {
-            products: [{ data: { store_invoice_id: documentNumber } }],
+            products: [{ data: { store_invoice_id: invoiceNumber } }],
             entities: [{
               data: {
-                store_invoice_id: documentNumber,
+                store_invoice_id: invoiceNumber,
                 meta: {
-                  einvoice_info: { SignedQRCode: signedXmlBase64 },
-                  shipment_meta: {
-                    xml: { content: signedXml, filename: `${documentNumber}.xml` },
-                  },
+                  einvoice_info: { invoice: { SignedQRCode: qrCodeData } },
+                  xml: { content: signedXml, filename: `${documentNumber}.xml` },
                 },
               },
             }],
@@ -117,9 +116,14 @@ function buildFyndTransitionRequest(input, signedXmlBase64, signedXml) {
 }
 
 function buildFyndTransitionTemplate(input) {
-  return buildFyndTransitionRequest(
+  const { shipmentId, documentNumber } = ownDataInput(
     input,
-    { $deferred: 'ReportingApiResponse.SignedXmlEncoded' },
+    ['shipmentId', 'documentNumber'],
+    'FYND_TRANSITION_REQUEST_INVALID',
+  );
+  return buildFyndTransitionRequest(
+    { shipmentId, documentNumber, invoiceNumber: '$OEIS_RESPONSE.InvoiceNumber' },
+    { $deferred: 'QRCodeData' },
     { $deferred: 'decoded ReportingApiResponse.SignedXmlEncoded' },
   );
 }
@@ -401,11 +405,14 @@ function createFyndShipmentClient(options = {}) {
     },
 
     async transitionToInvoiced(input = {}) {
-      const { companyId, shipmentId, documentNumber, signedXmlBase64, signedXml } = requireInput(input, 'FYND_TRANSITION_REQUEST_INVALID');
+      const {
+        companyId, shipmentId, documentNumber, invoiceNumber, qrCodeData, signedXml,
+      } = requireInput(input, 'FYND_TRANSITION_REQUEST_INVALID');
       requireIdentifier(companyId, 'FYND_TRANSITION_REQUEST_INVALID');
       requireIdentifier(shipmentId, 'FYND_TRANSITION_REQUEST_INVALID');
       requireIdentifier(documentNumber, 'FYND_TRANSITION_REQUEST_INVALID');
-      requireNonemptyString(signedXmlBase64, 'FYND_TRANSITION_REQUEST_INVALID');
+      requireIdentifier(invoiceNumber, 'FYND_TRANSITION_REQUEST_INVALID');
+      requireNonemptyString(qrCodeData, 'FYND_TRANSITION_REQUEST_INVALID');
       requireNonemptyString(signedXml, 'FYND_TRANSITION_REQUEST_INVALID');
       const platform = await platformFor(companyId);
       if (typeof platform.order.updateShipmentStatus !== 'function') {
@@ -413,8 +420,8 @@ function createFyndShipmentClient(options = {}) {
       }
       const result = await runFynd(() => platform.order.updateShipmentStatus(
         buildFyndTransitionRequest(
-          { shipmentId, documentNumber },
-          signedXmlBase64,
+          { shipmentId, documentNumber, invoiceNumber },
+          qrCodeData,
           signedXml,
         ),
       ));

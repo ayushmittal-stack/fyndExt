@@ -793,6 +793,7 @@ describe('Mongo repository staged port and BSON codecs', () => {
       'listShipmentAuditHeadsForCompany',
       'listPreJobFailureHeadsForCompany',
       'listShipmentAuditEventsForCompany',
+      'importHeldOeisResponseAndEnqueue',
     ]);
     expect(Object.isFrozen(MONGO_REPOSITORY_METHODS)).toBe(true);
     expect(MONGO_TRANSACTION_TIMEOUT_MS).toBe(5_000);
@@ -1005,6 +1006,7 @@ describe('Mongo repository initialization and lifecycle foundation', () => {
       'webhook_events',
       'invoice_jobs',
       'invoice_artifacts',
+      'oeis_response_attempts',
       'invoice_outbox',
       'counters',
       'migration_markers',
@@ -1048,9 +1050,25 @@ describe('Mongo repository initialization and lifecycle foundation', () => {
           collation: { locale: 'simple' },
         },
       ],
-      invoice_artifacts: [{
-        name: 'invoice_artifacts_jobId_uq', key: { jobId: 1 }, unique: true,
-      }],
+      invoice_artifacts: [
+        { name: 'invoice_artifacts_jobId_uq', key: { jobId: 1 }, unique: true },
+        { name: 'invoice_artifacts_transactionNumber_uq', key: { transactionNumber: 1 }, unique: true },
+        { name: 'invoice_artifacts_uuid_uq', key: { uuid: 1 }, unique: true },
+      ],
+      oeis_response_attempts: [
+        {
+          name: 'oeis_response_attempts_jobId_attemptNumber_uq',
+          key: { jobId: 1, attemptNumber: 1 }, unique: true,
+        },
+        {
+          name: 'oeis_response_attempts_responseIdentity_uq',
+          key: { responseIdentity: 1 }, unique: true, collation: { locale: 'simple' },
+        },
+        {
+          name: 'oeis_response_attempts_expiresAt_ttl',
+          key: { expiresAt: 1 }, expireAfterSeconds: 0,
+        },
+      ],
       invoice_outbox: [
         { name: 'invoice_outbox_outboxId_uq', key: { outboxId: 1 }, unique: true },
         {

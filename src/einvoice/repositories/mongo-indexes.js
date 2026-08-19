@@ -13,6 +13,7 @@ const MONGO_COLLECTION_NAMES = deepFreeze([
   'webhook_events',
   'invoice_jobs',
   'invoice_artifacts',
+  'oeis_response_attempts',
   'invoice_outbox',
   'counters',
   'migration_markers',
@@ -57,11 +58,29 @@ const MONGO_INDEX_CATALOG = deepFreeze({
       collation: { locale: 'simple' },
     },
   ],
-  invoice_artifacts: [{
-    name: 'invoice_artifacts_jobId_uq',
-    key: { jobId: 1 },
-    unique: true,
-  }],
+  invoice_artifacts: [
+    { name: 'invoice_artifacts_jobId_uq', key: { jobId: 1 }, unique: true },
+    { name: 'invoice_artifacts_transactionNumber_uq', key: { transactionNumber: 1 }, unique: true },
+    { name: 'invoice_artifacts_uuid_uq', key: { uuid: 1 }, unique: true },
+  ],
+  oeis_response_attempts: [
+    {
+      name: 'oeis_response_attempts_jobId_attemptNumber_uq',
+      key: { jobId: 1, attemptNumber: 1 },
+      unique: true,
+    },
+    {
+      name: 'oeis_response_attempts_responseIdentity_uq',
+      key: { responseIdentity: 1 },
+      unique: true,
+      collation: { locale: 'simple' },
+    },
+    {
+      name: 'oeis_response_attempts_expiresAt_ttl',
+      key: { expiresAt: 1 },
+      expireAfterSeconds: 0,
+    },
+  ],
   invoice_outbox: [
     { name: 'invoice_outbox_outboxId_uq', key: { outboxId: 1 }, unique: true },
     {

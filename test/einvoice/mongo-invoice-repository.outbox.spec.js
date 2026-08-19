@@ -172,9 +172,84 @@ async function makeLocked(fixture, suffix = '1') {
   return fixture.repository.markShipmentLocked(prepared.id, prepared.version);
 }
 
+async function makeHeld(fixture, suffix = 'held') {
+  const accepted = await fixture.repository.acceptWebhook(
+    eventRecord(suffix), normalizedShipment(suffix), true,
+  );
+  const claimed = await fixture.repository.claimNextJob('job-worker', JOB_LEASE);
+  const requestJson = JSON.stringify([{
+    TRAN_DOC_NO: `VR-shipment-${suffix}-1`, TRAN_LINE_NO: 1,
+    INV_TOTAL_AMOUNT: '115.00', INV_CUSTOMER_PAID_AMOUNT: '115.00',
+    INV_CUSTOMER_AMOUNT_DUE: '0.00',
+  }]);
+  const requestHash = createHash('sha256').update(requestJson).digest('hex');
+  const prepared = await fixture.repository.savePreparedRequest(
+    accepted.jobId, requestJson, requestHash, claimed.version,
+  );
+  const held = await fixture.repository.markShipmentLocked(prepared.id, prepared.version);
+  return { held, requestJson, requestHash };
+}
+
+test('atomically imports one bounded real response for an exact held job and enqueues Fynd', async () => {
+  const fixture = await readyFixture();
+  const { held, requestJson, requestHash } = await makeHeld(fixture);
+  const rows = JSON.parse(requestJson);
+  rows[0].INV_CUSTOMER_PAID_AMOUNT = '0.00';
+  rows[0].INV_CUSTOMER_AMOUNT_DUE = rows[0].INV_TOTAL_AMOUNT;
+  const correctedRequestJson = JSON.stringify(rows);
+  const correctedRequestHash = createHash('sha256').update(correctedRequestJson).digest('hex');
+  const responseJson = JSON.stringify({ private: 'complete response', signed: true });
+  const responseSha256 = createHash('sha256').update(responseJson).digest('hex');
+  const artifact = acceptedArtifact(held);
+
+  const result = await fixture.repository.importHeldOeisResponseAndEnqueue({
+    companyId: held.companyId,
+    shipmentId: held.shipmentId,
+    jobId: held.id,
+    expectedVersion: held.version,
+    previousRequestHash: requestHash,
+    correctedRequestJson,
+    correctedRequestHash,
+    artifact,
+    responseEvidence: {
+      attemptNumber: held.attemptCount,
+      httpStatus: 200,
+      responseJson,
+      responseByteCount: Buffer.byteLength(responseJson),
+      responseSha256,
+      oeisInvoiceNumber: 'OEIS-INVOICE-1',
+    },
+  });
+
+  expect(result.job).toEqual(expect.objectContaining({
+    state: JOB_STATES.FYND_TRANSITION_PENDING,
+    requestHash: correctedRequestHash,
+    oeisRequestJson: correctedRequestJson,
+    version: held.version + 1,
+  }));
+  expect(result.outbox).toEqual(expect.objectContaining({ status: OUTBOX_STATUSES.PENDING }));
+  expect(result.outbox.payload).toEqual({
+    shipmentId: held.shipmentId,
+    documentNumber: held.documentNumber,
+    oeisInvoiceNumber: 'OEIS-INVOICE-1',
+  });
+  expect(fixture.harness.documents('invoice_artifacts')).toHaveLength(1);
+  expect(fixture.harness.documents('oeis_response_attempts')).toEqual([
+    expect.objectContaining({
+      responseJson, responseSha256, responseByteCount: Buffer.byteLength(responseJson),
+      httpStatus: 200, outcome: 'SUCCESS', oeisInvoiceNumber: 'OEIS-INVOICE-1',
+      responseIdentity: 'SUCCESS:OEIS-INVOICE-1',
+    }),
+  ]);
+});
+
 async function enqueue(fixture, suffix = '1', auditEvents = []) {
   const locked = await makeLocked(fixture, suffix);
-  const artifact = acceptedArtifact(locked);
+  const suffixHash = createHash('sha256').update(String(suffix)).digest('hex');
+  const artifact = acceptedArtifact(locked, {
+    transactionNumber: `transaction-${suffix}`,
+    uuid: `${suffixHash.slice(0, 8)}-${suffixHash.slice(8, 12)}-${suffixHash.slice(12, 16)}-${suffixHash.slice(16, 20)}-${suffixHash.slice(20, 32)}`,
+  });
   const result = await fixture.repository.markOeisAcceptedAndEnqueue(
     locked.id,
     artifact,
@@ -619,8 +694,12 @@ describe('Mongo OEIS artifact and outbox enqueue contract', () => {
       id: 1,
       jobId: locked.id,
       action: OUTBOX_ACTIONS.FYND_TRANSITION,
-      payloadJson: `{"shipmentId":"${locked.shipmentId}","documentNumber":"${locked.documentNumber}"}`,
-      payload: { shipmentId: locked.shipmentId, documentNumber: locked.documentNumber },
+      payloadJson: `{"shipmentId":"${locked.shipmentId}","documentNumber":"${locked.documentNumber}","oeisInvoiceNumber":"${locked.documentNumber}"}`,
+      payload: {
+        shipmentId: locked.shipmentId,
+        documentNumber: locked.documentNumber,
+        oeisInvoiceNumber: locked.documentNumber,
+      },
       status: OUTBOX_STATUSES.PENDING,
       attemptCount: 0,
       nextAttemptAt: NOW.toISOString(),
