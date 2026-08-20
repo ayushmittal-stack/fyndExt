@@ -1,7 +1,7 @@
 # New OMS Extension UI Design
 
 **Date:** 2026-08-19  
-**Status:** Proposed for user review  
+**Status:** Approved for implementation
 **Scope:** Frontend presentation and frontend data orchestration only
 
 ## Purpose
@@ -254,7 +254,9 @@ Data-loading state is owned by these new React components, which call only the e
 - Run the full frontend tests and production build.
 - Compare Classic behavior and network activity before final acceptance.
 
-No phase begins until the preceding phase has been reviewed and accepted.
+Each phase keeps its own verification checkpoint. After Phase 1 was accepted, the user explicitly
+approved continuous implementation of Phases 2–5, so those phases may proceed without an
+additional pause between them.
 
 ## Verification Strategy
 

@@ -1,5 +1,5 @@
 import React from "react";
-import { Home } from "./pages/Home";
+import { ExtensionExperience } from "./components/oms/ExtensionExperience";
 
 const globalStyles = `
   html {
@@ -27,7 +27,7 @@ function App() {
     <>
       <style>{globalStyles}</style>
       <div className="root">
-        <Home />
+        <ExtensionExperience />
       </div>
     </>
   );

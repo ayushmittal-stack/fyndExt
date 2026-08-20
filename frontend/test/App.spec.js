@@ -1,15 +1,30 @@
 import React from 'react';
-import { render, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+
 import App from '../App';
-import { Home } from '../pages/Home';
 
 jest.mock('../pages/Home', () => ({
-  Home: () => <div data-testid="home-component">Home Component</div>
+  Home: () => <div>Classic Home</div>,
 }));
 
-describe('App Component', () => {
-  test('Renders Home component', () => {
-    const { getByTestId } = render(<App />);
-    expect(getByTestId('home-component')).toBeInTheDocument();
-  });
+afterEach(() => {
+  window.localStorage.clear();
+});
+
+test('renders the selected route-scoped extension experience', () => {
+  window.localStorage.setItem('sgh-einvoice:ui-mode:v1:12:34', 'oms');
+
+  render(
+    <MemoryRouter
+      initialEntries={['/company/12/application/34']}
+      future={{ v7_relativeSplatPath: true, v7_startTransition: true }}
+    >
+      <Routes>
+        <Route path="/company/:company_id/application/:application_id" element={<App />} />
+      </Routes>
+    </MemoryRouter>,
+  );
+
+  expect(screen.getByRole('heading', { name: 'E-Invoicing Shipments' })).toBeInTheDocument();
 });
