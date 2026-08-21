@@ -11,6 +11,7 @@ const OPAQUE_EVENT_ID_PATTERN = /^[\x21-\x7E]+$/;
 const MAX_EVENT_ID_BYTES = 512;
 const MAX_IDENTIFIER_BYTES = 512;
 const MAX_APPLICATION_ID_BYTES = 256;
+const SERVICE_PRODUCT_TYPE = 'service';
 const trustedIdentityContexts = new WeakMap();
 const FINANCIAL_FIELDS = [
   'price_effective',
@@ -1024,6 +1025,38 @@ function validateQuantity(quantity) {
   return Number(quantity);
 }
 
+function requireServiceBag(bag) {
+  if (!isPlainObject(bag)) fail('SHIPMENT_BAG_INVALID', 'Shipment bag is invalid');
+  const item = semanticOwnData(
+    bag,
+    'item',
+    'SHIPMENT_PRODUCT_TYPE_INVALID',
+    'Shipment bag product type must be service',
+  );
+  if (item === MISSING || !isPlainObject(item)) {
+    fail('SHIPMENT_PRODUCT_TYPE_INVALID', 'Shipment bag product type must be service');
+  }
+  const attributes = semanticOwnData(
+    item,
+    'attributes',
+    'SHIPMENT_PRODUCT_TYPE_INVALID',
+    'Shipment bag product type must be service',
+  );
+  if (attributes === MISSING || !isPlainObject(attributes)) {
+    fail('SHIPMENT_PRODUCT_TYPE_INVALID', 'Shipment bag product type must be service');
+  }
+  const productType = semanticOwnData(
+    attributes,
+    'product-type',
+    'SHIPMENT_PRODUCT_TYPE_INVALID',
+    'Shipment bag product type must be service',
+  );
+  if (typeof productType !== 'string'
+      || productType.trim().toLowerCase() !== SERVICE_PRODUCT_TYPE) {
+    fail('SHIPMENT_PRODUCT_TYPE_INVALID', 'Shipment bag product type must be service');
+  }
+}
+
 function normalizeShipmentWebhook({
   eventName,
   body,
@@ -1041,9 +1074,6 @@ function normalizeShipmentWebhook({
   const resolvedEventName = trustedContext === null ? eventName : trustedIdentity.eventName;
   if (resolvedEventName !== EVENT_NAME) {
     fail('WEBHOOK_EVENT_UNSUPPORTED', 'Webhook event is not supported');
-  }
-  if (policyVersion !== POLICY_VERSION) {
-    fail('TAX_ELIGIBILITY_POLICY_INVALID', 'Healthcare tax policy version is invalid');
   }
   let shipment;
   if (trustedContext !== null) {
@@ -1067,6 +1097,24 @@ function normalizeShipmentWebhook({
   const shipmentId = trustedContext === null
     ? normalizeIdentifier(shipment.shipment_id ?? shipment.id, 'shipment id')
     : trustedIdentity.shipmentId;
+  const rawBags = semanticOwnData(
+    shipment,
+    'bags',
+    'SHIPMENT_BAGS_REQUIRED',
+    'Shipment bags are required',
+  );
+  if (rawBags === MISSING) {
+    fail('SHIPMENT_BAGS_REQUIRED', 'Shipment bags are required');
+  }
+  const sourceBags = safeArrayValues(
+    rawBags,
+    'SHIPMENT_BAGS_REQUIRED',
+    'Shipment bags are required',
+  );
+  for (const bag of sourceBags) requireServiceBag(bag);
+  if (policyVersion !== POLICY_VERSION) {
+    fail('TAX_ELIGIBILITY_POLICY_INVALID', 'Healthcare tax policy version is invalid');
+  }
   const confirmedAt = statusProvenance.verifiedAt;
   const taxEligibility = normalizeTaxEligibility(shipment, normalizedEventId, confirmedAt);
 
@@ -1092,21 +1140,6 @@ function normalizeShipmentWebhook({
   const currency = getShipmentCurrency(shipment);
   const paymentMode = getPaymentMode(shipment);
   const amountPaid = getShipmentAmountPaid(shipment);
-
-  const rawBags = semanticOwnData(
-    shipment,
-    'bags',
-    'SHIPMENT_BAGS_REQUIRED',
-    'Shipment bags are required',
-  );
-  if (rawBags === MISSING) {
-    fail('SHIPMENT_BAGS_REQUIRED', 'Shipment bags are required');
-  }
-  const sourceBags = safeArrayValues(
-    rawBags,
-    'SHIPMENT_BAGS_REQUIRED',
-    'Shipment bags are required',
-  );
   const bags = sourceBags.map((bag, index) => {
     if (!isPlainObject(bag)) fail('SHIPMENT_BAG_INVALID', 'Shipment bag is invalid');
     const allFinancialSources = getFinancialBreakupSources(bag);

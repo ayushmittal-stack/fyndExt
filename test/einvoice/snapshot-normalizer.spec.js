@@ -132,6 +132,127 @@ test('builds an S/15 OEIS customer block from the valid Fynd recipient fields', 
   expect(JSON.parse(result.requestJson)).toEqual(result.rows);
 });
 
+test.each([
+  ['missing item', (shipment) => { delete shipment.bags[0].item; }],
+  ['malformed item', (shipment) => { shipment.bags[0].item = []; }],
+  ['missing attributes', (shipment) => { delete shipment.bags[0].item.attributes; }],
+  ['missing product type', (shipment) => {
+    delete shipment.bags[0].item.attributes['product-type'];
+  }],
+  ['malformed attributes', (shipment) => { shipment.bags[0].item.attributes = []; }],
+  ['inherited product type', (shipment) => {
+    shipment.bags[0].item.attributes = Object.create({ 'product-type': 'service' });
+  }],
+  ['non-string product type', (shipment) => {
+    shipment.bags[0].item.attributes['product-type'] = ['service'];
+  }],
+  ['non-service product type', (shipment) => {
+    shipment.bags[0].item.attributes['product-type'] = 'product';
+  }],
+  ['mixed service and product bags', (shipment) => {
+    const first = shipment.bags[0];
+    shipment.bags.push({
+      ...first,
+      bag_id: 'bag-2',
+      seller_identifier: 'SKU-02',
+      item: { attributes: { 'product-type': 'product' } },
+      financial_breakup: { ...first.financial_breakup },
+      prices: { ...first.prices },
+    });
+  }],
+])('rejects shipments unless every bag is a service: %s', (_description, change) => {
+  const body = webhookWithShipment(change);
+
+  expect(() => normalizeShipmentWebhook({
+    eventName: 'application/shipment/update/v1',
+    body,
+    companyId: 12655,
+    applicationId: 'app-1',
+  })).toThrow(expect.objectContaining({ code: 'SHIPMENT_PRODUCT_TYPE_INVALID' }));
+});
+
+test('rejects an accessor product type without executing its getter', () => {
+  const getter = jest.fn(() => 'service');
+  const body = webhookWithShipment((shipment) => {
+    Object.defineProperty(shipment.bags[0].item.attributes, 'product-type', { get: getter });
+  });
+
+  expect(() => normalizeShipmentWebhook({
+    eventName: 'application/shipment/update/v1',
+    body,
+    companyId: 12655,
+    applicationId: 'app-1',
+  })).toThrow(expect.objectContaining({ code: 'SHIPMENT_PRODUCT_TYPE_INVALID' }));
+  expect(getter).not.toHaveBeenCalled();
+});
+
+test('rejects proxied product attributes without executing proxy traps', () => {
+  const getPrototypeOf = jest.fn(() => Object.prototype);
+  const body = webhookWithShipment((shipment) => {
+    shipment.bags[0].item.attributes = new Proxy({}, { getPrototypeOf });
+  });
+
+  expect(() => normalizeShipmentWebhook({
+    eventName: 'application/shipment/update/v1',
+    body,
+    companyId: 12655,
+    applicationId: 'app-1',
+  })).toThrow(expect.objectContaining({ code: 'SHIPMENT_PRODUCT_TYPE_INVALID' }));
+  expect(getPrototypeOf).not.toHaveBeenCalled();
+});
+
+test('rejects a missing service product type before validating bag tax', () => {
+  const body = webhookWithShipment((shipment) => {
+    delete shipment.bags[0].item.attributes['product-type'];
+    shipment.bags[0].financial_breakup.gst_tax_percentage = '25.00';
+  });
+
+  expect(() => normalizeShipmentWebhook({
+    eventName: 'application/shipment/update/v1',
+    body,
+    companyId: 12655,
+    applicationId: 'app-1',
+  })).toThrow(expect.objectContaining({ code: 'SHIPMENT_PRODUCT_TYPE_INVALID' }));
+});
+
+test.each([
+  ['tax policy', () => undefined, { policyVersion: 'unsupported-policy' }],
+  ['branch', (shipment) => { delete shipment.fulfilling_store; }, {}],
+  ['currency', (shipment) => { shipment.currency = 'USD'; }, {}],
+  ['payment mode', (shipment) => { shipment.payment_info = [{ mode: 'COD' }]; }, {}],
+  ['paid amount', (shipment) => { shipment.amount_paid = 'invalid'; }, {}],
+])('rejects a missing service product type before validating shipment %s',
+  (_description, addInvalidField, options) => {
+    const body = webhookWithShipment((shipment) => {
+      delete shipment.bags[0].item.attributes['product-type'];
+      addInvalidField(shipment);
+    });
+
+    expect(() => normalizeShipmentWebhook({
+      eventName: 'application/shipment/update/v1',
+      body,
+      companyId: 12655,
+      applicationId: 'app-1',
+      ...options,
+    })).toThrow(expect.objectContaining({ code: 'SHIPMENT_PRODUCT_TYPE_INVALID' }));
+  });
+
+test('accepts a trimmed case-insensitive service product type', () => {
+  const body = webhookWithShipment((shipment) => {
+    shipment.bags[0].item.attributes['product-type'] = '  SeRvIcE  ';
+  });
+
+  const result = normalizeShipmentWebhook({
+    eventName: 'application/shipment/update/v1',
+    body,
+    companyId: 12655,
+    applicationId: 'app-1',
+  });
+
+  expect(result.shipment.bags).toHaveLength(1);
+  expect(result.shipment.shipmentId).toBe('17861361389811907489');
+});
+
 test('normalizes the sanitized live Fynd shipment shape to the existing canonical snapshot', () => {
   const result = normalizeShipmentWebhook({
     eventName: 'application/shipment/update/v1',

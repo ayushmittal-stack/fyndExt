@@ -24,6 +24,7 @@ function validBody(overrides = {}) {
     bags: [{
       bag_id: 'bag-1',
       seller_identifier: 'product-1',
+      item: { attributes: { 'product-type': 'service' } },
       quantity: 1,
       financial_breakup: {
         price_effective: '115.00',
@@ -189,6 +190,33 @@ describe('shipment webhook handler', () => {
     expect(rejected.map(event => event.safeCode)).toEqual(['CURRENCY_UNSUPPORTED', 'CURRENCY_UNSUPPORTED']);
     expect(rejected[0].startedAt).toBe(setup.repository.appendAuditEvents.mock.calls[1][0][0].startedAt);
     expect(setup.repository.acceptWebhook).not.toHaveBeenCalled();
+  });
+
+  test('audits a non-service shipment as a validation failure and creates no job', async () => {
+    const setup = createSetup();
+    const body = validBody();
+    body.payload.shipment.bags[0].item.attributes['product-type'] = 'product';
+    body.payload.shipment.currency = 'USD';
+
+    await expect(setup.handler(EVENT_NAME, body, 'company-1', 'application-1'))
+      .rejects.toEqual(expect.objectContaining({ code: 'SHIPMENT_PRODUCT_TYPE_INVALID' }));
+
+    expect(setup.repository.appendAuditEvents.mock.calls.map(([events]) => events.map(event => event.action)))
+      .toEqual([
+        ['WEBHOOK_RECEIVED'],
+        ['VALIDATION_STARTED'],
+        ['VALIDATION_FAILED', 'WEBHOOK_REJECTED'],
+      ]);
+    const rejected = setup.repository.appendAuditEvents.mock.calls[2][0];
+    expect(rejected.map(event => event.safeCode)).toEqual([
+      'SHIPMENT_PRODUCT_TYPE_INVALID',
+      'SHIPMENT_PRODUCT_TYPE_INVALID',
+    ]);
+    expect(setup.repository.acceptWebhook).not.toHaveBeenCalled();
+    expect(setup.logger.error).toHaveBeenCalledWith(
+      'Shipment webhook processing failed',
+      'SHIPMENT_PRODUCT_TYPE_INVALID',
+    );
   });
 
   test('passes canonical validation evidence into atomic acceptance and keeps platform replay keys stable', async () => {

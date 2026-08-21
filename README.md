@@ -84,6 +84,13 @@ UTF-8 compact JSON array of all 300 product codes sorted lexically. Reordering
 JSON object keys is allowed; adding, removing, replacing, or case-changing a
 code is rejected.
 
+Only service shipments enter the invoice pipeline. Every bag must provide an
+exact own string at `bag.item.attributes["product-type"]` whose trimmed,
+case-insensitive value is `service`. Missing, malformed, non-service, or mixed
+bags fail before job creation with `SHIPMENT_PRODUCT_TYPE_INVALID`; the durable
+shipment audit records `VALIDATION_FAILED` and `WEBHOOK_REJECTED`, and no Fynd
+lock, OEIS submission, or Fynd transition is attempted.
+
 For `bag_confirmed`, both the trigger status and eligibility verification time
 must come from exact own data fields on the same plain
 `shipment.shipment_status` object. Flat `shipment.status`, `created_ts`, and

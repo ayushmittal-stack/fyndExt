@@ -79,6 +79,22 @@ developer's local `.env` automatically.
 
 ## Upstream Fynd Tax-Decision Contract
 
+### Service-only shipment admission
+
+This extension accepts only shipments whose every bag represents a service.
+For each bag, the authoritative admission field is the exact own string at
+`body.payload.shipment.bags[].item.attributes["product-type"]`. The extension
+trims the value and compares it case-insensitively with `service`.
+
+Every bag must pass this check. A missing or malformed `item`, `attributes`, or
+`product-type`; a non-string or non-service value; and a shipment mixing service
+and non-service bags all fail with the safe code
+`SHIPMENT_PRODUCT_TYPE_INVALID`. After status and identity resolution, the
+check runs before tax-policy, tax-eligibility, branch, currency, payment,
+paid-amount, and bag financial/tax validation. The webhook records
+`VALIDATION_FAILED` and `WEBHOOK_REJECTED`, but creates no invoice job and makes
+no Fynd lock, OEIS submission, or Fynd transition call.
+
 The authoritative government-borne VAT decision is the exact own boolean at
 `body.payload.shipment.order.meta.custom_cart_meta.custom_conditions.taxation_nationality`.
 SGH/Fynd owns the semantics of that field; the extension validates and records

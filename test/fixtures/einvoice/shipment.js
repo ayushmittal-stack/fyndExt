@@ -26,6 +26,7 @@ function makeShipmentWebhook(overrides = {}) {
     bags: [{
       bag_id: 'bag-1',
       seller_identifier: 'SKU-01',
+      item: { attributes: { 'product-type': 'service' } },
       quantity: 1,
       financial_breakup: {
         price_effective: '100.00',
@@ -84,6 +85,7 @@ function makeLiveNestedShipmentWebhook() {
         bags: [{
           bag_id: 'bag-live-safe-1',
           seller_identifier: 'SKU-LIVE-01',
+          item: { attributes: { 'product-type': 'service' } },
           article: {
             seller_identifier: 'SKU-LIVE-01',
             identifiers: { sku_code: 'SKU-LIVE-01' },
