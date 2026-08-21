@@ -90,8 +90,8 @@ export const dryRunJourney = {
           shipments: [{
             identifier: 'shipment-100', products: [],
             data_updates: {
-              products: [{ data: { store_invoice_id: '$OEIS_RESPONSE.InvoiceNumber' } }],
-              entities: [{ data: { store_invoice_id: '$OEIS_RESPONSE.InvoiceNumber' } }],
+              products: [{ data: { store_invoice_id: '$OEIS_RESPONSE.InvoiceNumber[0:25]' } }],
+              entities: [{ data: { store_invoice_id: '$OEIS_RESPONSE.InvoiceNumber[0:25]' } }],
             },
             privateField: 'must not render',
           }],

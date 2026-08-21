@@ -17,6 +17,8 @@ const { createInvoiceWorkflow } = require('../../src/einvoice/invoice-workflow')
 
 const DOCUMENT = 'VR-shipment-1-1';
 const OEIS_INVOICE = 'U_IN-119/2026/0000000001';
+const LONG_OEIS_INVOICE = 'OEIS/2026/12345678901234567890';
+const LONG_OEIS_INVOICE_CODE = 'OEIS/2026/123456789012345';
 const WORKFLOW_NOW = new Date('2026-08-10T04:30:00.000Z');
 const LOCKED_AT = '2026-08-10T04:35:00.000Z';
 const LEASE_EXPIRES_AT = '2026-08-10T05:00:00.000Z';
@@ -1446,6 +1448,91 @@ describe('invoice workflow outbox processing', () => {
       expect(setup.repository.markOutboxIndeterminate).toHaveBeenCalled();
       expect(setup.deps.fyndClient.transitionToInvoiced).not.toHaveBeenCalled();
     }
+  });
+
+  test('reconciles the capped OEIS store ID with the full OEIS XML filename', async () => {
+    const claimed = outbox({
+      status: OUTBOX_STATUSES.RETRY_WAIT,
+      attemptCount: 2,
+      payload: {
+        shipmentId: 'shipment-1',
+        documentNumber: DOCUMENT,
+        oeisInvoiceNumber: LONG_OEIS_INVOICE,
+      },
+    });
+    const setup = createDeps({
+      initialJob: pendingJob(),
+      shipmentRead: {
+        shipmentId: 'shipment-1',
+        status: 'bag_invoiced',
+        locked: false,
+        invoiceId: LONG_OEIS_INVOICE_CODE,
+        meta: {
+          einvoice_info: {
+            invoice: {
+              InvoiceNumber: LONG_OEIS_INVOICE,
+              SignedQRCode: QR_CODE_DATA,
+            },
+          },
+          xml: { content: XML, filename: `${LONG_OEIS_INVOICE}.xml` },
+        },
+        responseStatus: null,
+      },
+    });
+    setup.repository.findUnresolvedAuditOperation.mockResolvedValueOnce(
+      pendingRecovery(claimed, {
+        targetKind: 'OUTBOX',
+        stage: 'FYND_TRANSITION',
+        action: 'FYND_TRANSITION_REQUESTED',
+      }),
+    );
+
+    await createInvoiceWorkflow(setup.deps).processOutbox(claimed, retryPlan());
+
+    expect(setup.repository.completeOutboxAndJob).toHaveBeenCalled();
+    expect(setup.deps.fyndClient.transitionToInvoiced).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    ['missing', { SignedQRCode: QR_CODE_DATA }],
+    ['different', { InvoiceNumber: 'other-oeis-invoice', SignedQRCode: QR_CODE_DATA }],
+  ])('does not reconcile the new contract when the full OEIS invoice metadata is %s', async (_case, invoice) => {
+    const claimed = outbox({
+      status: OUTBOX_STATUSES.RETRY_WAIT,
+      attemptCount: 2,
+      payload: {
+        shipmentId: 'shipment-1',
+        documentNumber: DOCUMENT,
+        oeisInvoiceNumber: LONG_OEIS_INVOICE,
+      },
+    });
+    const setup = createDeps({
+      initialJob: pendingJob(),
+      shipmentRead: {
+        shipmentId: 'shipment-1',
+        status: 'bag_invoiced',
+        locked: false,
+        invoiceId: LONG_OEIS_INVOICE_CODE,
+        meta: {
+          einvoice_info: { invoice },
+          xml: { content: XML, filename: `${LONG_OEIS_INVOICE}.xml` },
+        },
+        responseStatus: null,
+      },
+    });
+    setup.repository.findUnresolvedAuditOperation.mockResolvedValueOnce(
+      pendingRecovery(claimed, {
+        targetKind: 'OUTBOX',
+        stage: 'FYND_TRANSITION',
+        action: 'FYND_TRANSITION_REQUESTED',
+      }),
+    );
+
+    await createInvoiceWorkflow(setup.deps).processOutbox(claimed, retryPlan());
+
+    expect(setup.repository.completeOutboxAndJob).not.toHaveBeenCalled();
+    expect(setup.repository.markOutboxIndeterminate).toHaveBeenCalled();
+    expect(setup.deps.fyndClient.transitionToInvoiced).not.toHaveBeenCalled();
   });
 
   test('reads back once after an ambiguous transition and schedules retry for exact pre-state', async () => {

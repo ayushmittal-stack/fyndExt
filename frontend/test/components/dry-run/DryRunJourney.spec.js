@@ -236,13 +236,14 @@ function detailFor(jobId = 42, requestHash = REQUEST_HASH) {
                     identifier: job.shipmentId,
                     products: [],
                     data_updates: {
-                      products: [{ data: { store_invoice_id: '$OEIS_RESPONSE.InvoiceNumber' } }],
+                      products: [{ data: { store_invoice_id: '$OEIS_RESPONSE.InvoiceNumber[0:25]' } }],
                       entities: [{
                         data: {
-                          store_invoice_id: '$OEIS_RESPONSE.InvoiceNumber',
+                          store_invoice_id: '$OEIS_RESPONSE.InvoiceNumber[0:25]',
                           meta: {
                             einvoice_info: {
                               invoice: {
+                                InvoiceNumber: '$OEIS_RESPONSE.InvoiceNumber',
                                 SignedQRCode: {
                                   $deferred: 'QRCodeData',
                                 },
@@ -252,7 +253,7 @@ function detailFor(jobId = 42, requestHash = REQUEST_HASH) {
                               content: {
                                 $deferred: 'decoded ReportingApiResponse.SignedXmlEncoded',
                               },
-                              filename: `${job.documentNumber}.xml`,
+                              filename: '$OEIS_RESPONSE.InvoiceNumber.xml',
                             },
                           },
                         },
@@ -913,10 +914,12 @@ describe('DryRunJourney', () => {
     const renderedTransition = JSON.parse(within(transitionPanel).getByRole('code').textContent);
     const transitionShipment = renderedTransition.body.statuses[0].shipments[0];
     expect(transitionShipment.data_updates.products).toEqual([{
-      data: { store_invoice_id: '$OEIS_RESPONSE.InvoiceNumber' },
+      data: { store_invoice_id: '$OEIS_RESPONSE.InvoiceNumber[0:25]' },
     }]);
+    expect(transitionShipment.data_updates.entities[0].data.meta.einvoice_info.invoice.InvoiceNumber)
+      .toBe('$OEIS_RESPONSE.InvoiceNumber');
     expect(transitionShipment.data_updates.entities[0].data.meta.xml.filename)
-      .toBe(`${PRIMARY_DOCUMENT_NUMBER}.xml`);
+      .toBe('$OEIS_RESPONSE.InvoiceNumber.xml');
     const oeisPanel = screen.getByRole('region', { name: 'OEIS diagnostic request' });
     expect(oeisPanel).toHaveTextContent('POST');
     expect(oeisPanel).toHaveTextContent('63');

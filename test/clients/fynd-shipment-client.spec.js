@@ -20,6 +20,8 @@ const {
 
 const COMPANY_ID = 12655;
 const OEIS_INVOICE_NUMBER = 'U_IN-119/2026/0000000001';
+const LONG_OEIS_INVOICE_NUMBER = 'OEIS/2026/12345678901234567890';
+const LONG_OEIS_INVOICE_CODE = 'OEIS/2026/123456789012345';
 
 function makePlatform({ lockResult = { success: true }, transitionResult: statusResult = nestedTransitionSuccess(), shipmentResult } = {}) {
   return {
@@ -124,10 +126,10 @@ test('builds the exact fresh FDK transition template with only two deferred fiel
           identifier: '17861361389811907489',
           products: [],
           data_updates: {
-            products: [{ data: { store_invoice_id: DOCUMENT_NUMBER } }],
+            products: [{ data: { store_invoice_id: '$OEIS_RESPONSE.InvoiceNumber[0:25]' } }],
             entities: [{
               data: {
-                store_invoice_id: DOCUMENT_NUMBER,
+                store_invoice_id: '$OEIS_RESPONSE.InvoiceNumber[0:25]',
                 meta: {
                   einvoice_info: {
                     invoice: {
@@ -137,7 +139,7 @@ test('builds the exact fresh FDK transition template with only two deferred fiel
                   },
                   xml: {
                     content: { $deferred: 'decoded ReportingApiResponse.SignedXmlEncoded' },
-                    filename: 'VR-17861361389811907489-1.xml',
+                    filename: '$OEIS_RESPONSE.InvoiceNumber.xml',
                   },
                 },
               },
@@ -213,7 +215,7 @@ test.each([
     .rejects.toEqual(expect.objectContaining({ name: 'EinvoiceError', code: 'FYND_LOCK_RESPONSE_INVALID', retryable: false }));
 });
 
-test('transitions and unlocks with the exact Avis and Grindor metadata contract', async () => {
+test('transitions and unlocks using only the OEIS invoice for store IDs and XML filename', async () => {
   const platform = makePlatform();
   const { client, getPlatformClient } = makeClient(platform);
 
@@ -236,15 +238,15 @@ test('transitions and unlocks with the exact Avis and Grindor metadata contract'
           identifier: SHIPMENT_ID,
           products: [],
           data_updates: {
-            products: [{ data: { store_invoice_id: DOCUMENT_NUMBER } }],
+            products: [{ data: { store_invoice_id: OEIS_INVOICE_NUMBER } }],
             entities: [{
               data: {
-                store_invoice_id: DOCUMENT_NUMBER,
+                store_invoice_id: OEIS_INVOICE_NUMBER,
                 meta: {
                   einvoice_info: {
                     invoice: { InvoiceNumber: OEIS_INVOICE_NUMBER, SignedQRCode: QR_CODE_DATA },
                   },
-                  xml: { content: SIGNED_XML, filename: `${DOCUMENT_NUMBER}.xml` },
+                  xml: { content: SIGNED_XML, filename: `${OEIS_INVOICE_NUMBER}.xml` },
                 },
               },
             }],
@@ -256,6 +258,27 @@ test('transitions and unlocks with the exact Avis and Grindor metadata contract'
   const body = platform.order.updateShipmentStatus.mock.calls[0][0].body;
   expect(body).not.toHaveProperty('exclude_bags_next_state');
   expect(body.statuses[0].shipments[0].data_updates.products[0].data).not.toHaveProperty('meta');
+});
+
+test('limits only the OEIS-derived store ID to 25 characters', async () => {
+  const platform = makePlatform();
+  const { client } = makeClient(platform);
+
+  await client.transitionToInvoiced({
+    ...transitionInput(),
+    invoiceNumber: LONG_OEIS_INVOICE_NUMBER,
+  });
+
+  const shipment = platform.order.updateShipmentStatus.mock.calls[0][0]
+    .body.statuses[0].shipments[0];
+  expect(shipment.data_updates.products[0].data.store_invoice_id)
+    .toBe(LONG_OEIS_INVOICE_CODE);
+  expect(shipment.data_updates.entities[0].data.store_invoice_id)
+    .toBe(LONG_OEIS_INVOICE_CODE);
+  expect(shipment.data_updates.entities[0].data.meta.einvoice_info.invoice.InvoiceNumber)
+    .toBe(LONG_OEIS_INVOICE_NUMBER);
+  expect(shipment.data_updates.entities[0].data.meta.xml.filename)
+    .toBe(`${LONG_OEIS_INVOICE_NUMBER}.xml`);
 });
 
 test.each([

@@ -286,10 +286,10 @@ test('builds the exact safe held journey from validated persisted bytes', async 
                 identifier: '17861361389811907489',
                 products: [],
                 data_updates: {
-                  products: [{ data: { store_invoice_id: 'VR-17861361389811907489-1' } }],
+                  products: [{ data: { store_invoice_id: '$OEIS_RESPONSE.InvoiceNumber[0:25]' } }],
                   entities: [{
                     data: {
-                      store_invoice_id: 'VR-17861361389811907489-1',
+                      store_invoice_id: '$OEIS_RESPONSE.InvoiceNumber[0:25]',
                       meta: {
                         einvoice_info: {
                           invoice: {
@@ -299,7 +299,7 @@ test('builds the exact safe held journey from validated persisted bytes', async 
                         },
                         xml: {
                           content: { $deferred: 'decoded ReportingApiResponse.SignedXmlEncoded' },
-                          filename: 'VR-17861361389811907489-1.xml',
+                          filename: '$OEIS_RESPONSE.InvoiceNumber.xml',
                         },
                       },
                     },

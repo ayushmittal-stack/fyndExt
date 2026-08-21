@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { TextDecoder, types } = require('util');
 
 const { EinvoiceError } = require('./errors');
+const { toFyndStoreInvoiceId } = require('./clients/fynd-shipment-client');
 const {
   createAuditBundle,
   createEventKey,
@@ -376,17 +377,22 @@ function transitionCompleteState(shipment, job, artifact, signedXml, invoiceNumb
         || !isPlainRecord(shipment.meta.xml)
         || !hasOwnFields(shipment.meta.xml, ['content', 'filename'])) return false;
     const invoiceMetadata = shipment.meta.einvoice_info.invoice;
-    const invoiceIdentityMatches = shipment.invoiceId === invoiceNumber
+    const currentContractMatches = shipment.invoiceId === toFyndStoreInvoiceId(invoiceNumber)
+      && hasOwn(invoiceMetadata, 'InvoiceNumber')
+      && invoiceMetadata.InvoiceNumber === invoiceNumber
+      && shipment.meta.xml.filename === `${invoiceNumber}.xml`;
+    const legacyInvoiceIdentityMatches = shipment.invoiceId === invoiceNumber
       || (shipment.invoiceId === job.documentNumber
         && hasOwn(invoiceMetadata, 'InvoiceNumber')
         && invoiceMetadata.InvoiceNumber === invoiceNumber);
+    const legacyContractMatches = legacyInvoiceIdentityMatches
+      && shipment.meta.xml.filename === `${job.documentNumber}.xml`;
     return shipment.shipmentId === job.shipmentId
       && fyndState(shipment) !== null
       && shipment.locked === false
-      && invoiceIdentityMatches
+      && (currentContractMatches || legacyContractMatches)
       && invoiceMetadata.SignedQRCode === artifact.qrCodeData
-      && shipment.meta.xml.content === signedXml
-      && shipment.meta.xml.filename === `${job.documentNumber}.xml`;
+      && shipment.meta.xml.content === signedXml;
   } catch {
     return false;
   }

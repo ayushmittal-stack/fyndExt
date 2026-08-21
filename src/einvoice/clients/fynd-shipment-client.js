@@ -2,6 +2,10 @@
 
 const { EinvoiceError } = require('../errors');
 
+const FYND_STORE_INVOICE_ID_MAX_CHARACTERS = 25;
+const OEIS_INVOICE_NUMBER_TEMPLATE = '$OEIS_RESPONSE.InvoiceNumber';
+const OEIS_STORE_INVOICE_ID_TEMPLATE = '$OEIS_RESPONSE.InvoiceNumber[0:25]';
+
 function fail(code, message, retryable = false) {
   throw new EinvoiceError(code, message, { retryable });
 }
@@ -59,6 +63,12 @@ function requireInput(input, code) {
   return input;
 }
 
+function toFyndStoreInvoiceId(invoiceNumber) {
+  return Array.from(String(invoiceNumber))
+    .slice(0, FYND_STORE_INVOICE_ID_MAX_CHARACTERS)
+    .join('');
+}
+
 function buildFyndLockRequest(input) {
   const { shipmentId, documentNumber } = ownDataInput(
     input,
@@ -77,15 +87,7 @@ function buildFyndLockRequest(input) {
   };
 }
 
-function buildFyndTransitionRequest(input, qrCodeData, signedXml) {
-  const { shipmentId, documentNumber, invoiceNumber } = ownDataInput(
-    input,
-    ['shipmentId', 'documentNumber', 'invoiceNumber'],
-    'FYND_TRANSITION_REQUEST_INVALID',
-  );
-  requireIdentifier(shipmentId, 'FYND_TRANSITION_REQUEST_INVALID');
-  requireIdentifier(documentNumber, 'FYND_TRANSITION_REQUEST_INVALID');
-  requireIdentifier(invoiceNumber, 'FYND_TRANSITION_REQUEST_INVALID');
+function buildFyndTransitionBody({ shipmentId, invoiceNumber, storeInvoiceId }, qrCodeData, signedXml) {
   return {
     body: {
       task: false,
@@ -98,15 +100,15 @@ function buildFyndTransitionRequest(input, qrCodeData, signedXml) {
           identifier: shipmentId,
           products: [],
           data_updates: {
-            products: [{ data: { store_invoice_id: documentNumber } }],
+            products: [{ data: { store_invoice_id: storeInvoiceId } }],
             entities: [{
               data: {
-                store_invoice_id: documentNumber,
+                store_invoice_id: storeInvoiceId,
                 meta: {
                   einvoice_info: {
                     invoice: { InvoiceNumber: invoiceNumber, SignedQRCode: qrCodeData },
                   },
-                  xml: { content: signedXml, filename: `${documentNumber}.xml` },
+                  xml: { content: signedXml, filename: `${invoiceNumber}.xml` },
                 },
               },
             }],
@@ -117,14 +119,36 @@ function buildFyndTransitionRequest(input, qrCodeData, signedXml) {
   };
 }
 
+function buildFyndTransitionRequest(input, qrCodeData, signedXml) {
+  const { shipmentId, documentNumber, invoiceNumber } = ownDataInput(
+    input,
+    ['shipmentId', 'documentNumber', 'invoiceNumber'],
+    'FYND_TRANSITION_REQUEST_INVALID',
+  );
+  requireIdentifier(shipmentId, 'FYND_TRANSITION_REQUEST_INVALID');
+  requireIdentifier(documentNumber, 'FYND_TRANSITION_REQUEST_INVALID');
+  requireIdentifier(invoiceNumber, 'FYND_TRANSITION_REQUEST_INVALID');
+  return buildFyndTransitionBody({
+    shipmentId,
+    invoiceNumber,
+    storeInvoiceId: toFyndStoreInvoiceId(invoiceNumber),
+  }, qrCodeData, signedXml);
+}
+
 function buildFyndTransitionTemplate(input) {
   const { shipmentId, documentNumber } = ownDataInput(
     input,
     ['shipmentId', 'documentNumber'],
     'FYND_TRANSITION_REQUEST_INVALID',
   );
-  return buildFyndTransitionRequest(
-    { shipmentId, documentNumber, invoiceNumber: '$OEIS_RESPONSE.InvoiceNumber' },
+  requireIdentifier(shipmentId, 'FYND_TRANSITION_REQUEST_INVALID');
+  requireIdentifier(documentNumber, 'FYND_TRANSITION_REQUEST_INVALID');
+  return buildFyndTransitionBody(
+    {
+      shipmentId,
+      invoiceNumber: OEIS_INVOICE_NUMBER_TEMPLATE,
+      storeInvoiceId: OEIS_STORE_INVOICE_ID_TEMPLATE,
+    },
     { $deferred: 'QRCodeData' },
     { $deferred: 'decoded ReportingApiResponse.SignedXmlEncoded' },
   );
@@ -449,4 +473,5 @@ module.exports = {
   buildFyndLockRequest,
   buildFyndTransitionTemplate,
   createFyndShipmentClient,
+  toFyndStoreInvoiceId,
 };
