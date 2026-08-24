@@ -29,9 +29,9 @@ function makeSnapshot() {
     },
     bags: [
       {
-        bagId: 'bag-1', lineNumber: 99, productCode: 'SKU-01', quantity: 2,
+        bagId: 'bag-1', lineNumber: 99, productCode: 'SKU-01', quantity: 1,
         financialBreakup: {
-          price_effective: '50.00', promotion_effective_discount: '10.00', coupon_effective_discount: '5.00',
+          price_effective: '100.00', promotion_effective_discount: '10.00', coupon_effective_discount: '5.00',
           value_of_good: '85.00', gst_tax_percentage: '15.00', gst_fee: '12.75', amount_paid: '97.75',
         },
         prices: { promotion_effective_discount: '10.00', coupon_effective_discount: '5.00' },
@@ -94,7 +94,7 @@ test('builds a bare B2C row array with hand-derived line and invoice totals', ()
     TRAN_BRANCH: 'BRANCH-01', TRAN_SERVICE_BRANCH: 'BRANCH-01',
     PRODUCT_CODE: 'SKU-01', TRAN_UQC: 'OTH',
     INV_CURRENCY_CODE: 'SAR', VAT_CURRENCY_CODE: 'SAR',
-    TRAN_QUANTITY: 2, TRAN_UNIT_PRICE: '50.00', TRAN_GROSS_AMOUNT: '100.00',
+    TRAN_QUANTITY: 1, TRAN_UNIT_PRICE: '100.00', TRAN_GROSS_AMOUNT: '100.00',
     TRAN_DISC1_REASON_CODE: '95', TRAN_DISC1_REASON_TEXT: 'Promotion Discount', TRAN_DISC1_AMOUNT: '10.00',
     TRAN_DISC2_REASON_CODE: '95', TRAN_DISC2_REASON_TEXT: 'Coupon Discount', TRAN_DISC2_AMOUNT: '5.00',
     TRAN_NET_AMOUNT: '85.00', TRAN_TAX_CODE_CATEGORY: 'S', TRAN_TAX_RATE: '15.00',
@@ -111,6 +111,63 @@ test('builds a bare B2C row array with hand-derived line and invoice totals', ()
   expect(JSON.parse(result.requestJson)).toEqual(result.rows);
   expect(result.requestJson.startsWith('[')).toBe(true);
   expect(result.requestHash).toBe(crypto.createHash('sha256').update(result.requestJson, 'utf8').digest('hex'));
+});
+
+test('scales real Fynd per-unit financial breakup for a quantity-two line', () => {
+  const snapshot = makeSnapshot();
+  snapshot.bags = [{
+    bagId: 'bag-real-quantity-two', lineNumber: 1, productCode: 'SKU-01', quantity: 2,
+    financialBreakup: {
+      price_effective: '299.00', promotion_effective_discount: '279.12', coupon_effective_discount: '0.00',
+      value_of_good: '19.88', gst_tax_percentage: '15.00', gst_fee: '2.98', amount_paid: '22.86',
+    },
+    prices: { promotion_effective_discount: '279.12', coupon_effective_discount: '0.00' },
+  }];
+  snapshot.amountPaid = '45.72';
+
+  const result = build(snapshot);
+
+  expect(result.rows).toEqual([expect.objectContaining({
+    TRAN_QUANTITY: 2,
+    TRAN_UNIT_PRICE: '299.00',
+    TRAN_GROSS_AMOUNT: '598.00',
+    TRAN_DISC1_AMOUNT: '558.24',
+    TRAN_NET_AMOUNT: '39.76',
+    TRAN_TAX_AMOUNT: '5.96',
+    TRAN_NET_PLUS_TAX: '45.72',
+    INV_NET_AMOUNT: '39.76',
+    INV_TOTAL_TAX_AMOUNT: '5.96',
+    INV_TOTAL_AMOUNT: '45.72',
+  })]);
+});
+
+test('scales a quantity-two per-unit delivery allocation into one invoice charge', () => {
+  const snapshot = makeSnapshot();
+  snapshot.bags = [{
+    bagId: 'bag-quantity-two-delivery', lineNumber: 1, productCode: 'SKU-01', quantity: 2,
+    financialBreakup: {
+      price_effective: '100.00', promotion_effective_discount: '0.00', coupon_effective_discount: '0.00',
+      value_of_good: '100.00', gst_tax_percentage: '15.00', gst_fee: '15.00',
+      amount_paid: '126.50', delivery_charge: '10.00',
+    },
+    prices: { promotion_effective_discount: '0.00', coupon_effective_discount: '0.00' },
+  }];
+  snapshot.deliveryCharge = {
+    taxCategory: 'S', taxRate: '15.00', netAmount: '20.00', taxAmount: '3.00', paidAmount: '23.00',
+  };
+  snapshot.amountPaid = '253.00';
+
+  const result = build(snapshot);
+
+  expect(result.rows).toEqual([expect.objectContaining({
+    TRAN_QUANTITY: 2,
+    TRAN_NET_AMOUNT: '200.00',
+    TRAN_TAX_AMOUNT: '30.00',
+    INV_CHGS_PERCENT: '10.00',
+    INV_CHGS_AMOUNT: '20.00',
+    INV_CHGS_VAT_AMOUNT: '3.00',
+    INV_TOTAL_AMOUNT: '253.00',
+  })]);
 });
 
 test('maps eligible HEA product amounts while preserving standard-rated document delivery', () => {

@@ -136,21 +136,44 @@ function readLineFinancials(bag, tolerance) {
   }
   const breakup = bag.financialBreakup;
   const quantity = validatePositiveInteger(bag.quantity);
+  const quantityMultiplier = BigInt(quantity);
   const unitPrice = readMoney(breakup.price_effective, 'SHIPMENT_PRICE_INVALID', 'Shipment price is invalid', { positive: true });
-  const promotionDiscount = readMoney(breakup.promotion_effective_discount, 'SHIPMENT_DISCOUNT_INVALID', 'Shipment discount is invalid');
-  const couponDiscount = readMoney(breakup.coupon_effective_discount, 'SHIPMENT_DISCOUNT_INVALID', 'Shipment discount is invalid');
-  const netAmount = readMoney(breakup.value_of_good, 'SHIPMENT_FINANCIAL_VALUE_INVALID', 'Shipment financial value is invalid');
+  const unitPromotionDiscount = readMoney(breakup.promotion_effective_discount, 'SHIPMENT_DISCOUNT_INVALID', 'Shipment discount is invalid');
+  const unitCouponDiscount = readMoney(breakup.coupon_effective_discount, 'SHIPMENT_DISCOUNT_INVALID', 'Shipment discount is invalid');
+  const unitNetAmount = readMoney(breakup.value_of_good, 'SHIPMENT_FINANCIAL_VALUE_INVALID', 'Shipment financial value is invalid');
   const taxRate = readMoney(breakup.gst_tax_percentage, 'SHIPMENT_TAX_RATE_INVALID', 'Shipment tax rate is invalid');
-  const taxAmount = readMoney(breakup.gst_fee, 'SHIPMENT_FINANCIAL_VALUE_INVALID', 'Shipment financial value is invalid');
-  const paidAmount = readMoney(breakup.amount_paid, 'SHIPMENT_FINANCIAL_VALUE_INVALID', 'Shipment financial value is invalid');
+  const unitTaxAmount = readMoney(breakup.gst_fee, 'SHIPMENT_FINANCIAL_VALUE_INVALID', 'Shipment financial value is invalid');
+  const unitPaidAmount = readMoney(breakup.amount_paid, 'SHIPMENT_FINANCIAL_VALUE_INVALID', 'Shipment financial value is invalid');
   const hasDeliveryField = breakup.delivery_charge !== undefined;
-  const deliveryNet = !hasDeliveryField
+  const unitDeliveryNet = !hasDeliveryField
     ? 0n
     : readMoney(
       breakup.delivery_charge,
       'SHIPMENT_DELIVERY_VALUE_INVALID',
       'Shipment delivery charge is invalid',
     );
+
+  if (bag.prices !== undefined) {
+    if (!isObject(bag.prices)) fail('SHIPMENT_PRICES_INVALID', 'Shipment prices are invalid');
+    for (const [field, amount] of [
+      ['promotion_effective_discount', unitPromotionDiscount],
+      ['coupon_effective_discount', unitCouponDiscount],
+    ]) {
+      if (bag.prices[field] !== undefined) {
+        const duplicatedAmount = readMoney(bag.prices[field], 'SHIPMENT_DISCOUNT_INVALID', 'Shipment discount is invalid');
+        assertWithinTolerance(amount, duplicatedAmount, tolerance,
+          'SHIPMENT_DISCOUNT_CONFLICT', 'Shipment discount fields conflict');
+      }
+    }
+  }
+
+  const grossAmount = unitPrice * quantityMultiplier;
+  const promotionDiscount = unitPromotionDiscount * quantityMultiplier;
+  const couponDiscount = unitCouponDiscount * quantityMultiplier;
+  const netAmount = unitNetAmount * quantityMultiplier;
+  const taxAmount = unitTaxAmount * quantityMultiplier;
+  const paidAmount = unitPaidAmount * quantityMultiplier;
+  const deliveryNet = unitDeliveryNet * quantityMultiplier;
   const hasDeliveryAllocation = deliveryNet !== 0n;
   let productPaidAmount = paidAmount;
   let deliveryPaid = 0n;
@@ -166,22 +189,6 @@ function readLineFinancials(bag, tolerance) {
     }
     deliveryTax = deliveryPaid - deliveryNet;
   }
-
-  if (bag.prices !== undefined) {
-    if (!isObject(bag.prices)) fail('SHIPMENT_PRICES_INVALID', 'Shipment prices are invalid');
-    for (const [field, amount] of [
-      ['promotion_effective_discount', promotionDiscount],
-      ['coupon_effective_discount', couponDiscount],
-    ]) {
-      if (bag.prices[field] !== undefined) {
-        const duplicatedAmount = readMoney(bag.prices[field], 'SHIPMENT_DISCOUNT_INVALID', 'Shipment discount is invalid');
-        assertWithinTolerance(amount, duplicatedAmount, tolerance,
-          'SHIPMENT_DISCOUNT_CONFLICT', 'Shipment discount fields conflict');
-      }
-    }
-  }
-
-  const grossAmount = unitPrice * BigInt(quantity);
   assertWithinTolerance(grossAmount - promotionDiscount - couponDiscount, netAmount, tolerance,
     'LINE_TOTAL_MISMATCH', 'Shipment line totals do not reconcile');
   if (!hasDeliveryAllocation) {
