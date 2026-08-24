@@ -65,6 +65,7 @@ function requireInput(input, code) {
 
 function toFyndStoreInvoiceId(invoiceNumber) {
   return Array.from(String(invoiceNumber))
+    .map(character => (/^[A-Za-z0-9-]$/.test(character) ? character : '-'))
     .slice(0, FYND_STORE_INVOICE_ID_MAX_CHARACTERS)
     .join('');
 }

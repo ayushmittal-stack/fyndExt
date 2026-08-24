@@ -5,6 +5,7 @@ const {
   buildFyndLockRequest,
   buildFyndTransitionTemplate,
   createFyndShipmentClient,
+  toFyndStoreInvoiceId,
 } = require('../../src/einvoice/clients/fynd-shipment-client');
 const {
   DOCUMENT_NUMBER,
@@ -20,8 +21,9 @@ const {
 
 const COMPANY_ID = 12655;
 const OEIS_INVOICE_NUMBER = 'U_IN-119/2026/0000000001';
+const OEIS_INVOICE_CODE = 'U-IN-119-2026-0000000001';
 const LONG_OEIS_INVOICE_NUMBER = 'OEIS/2026/12345678901234567890';
-const LONG_OEIS_INVOICE_CODE = 'OEIS/2026/123456789012345';
+const LONG_OEIS_INVOICE_CODE = 'OEIS-2026-123456789012345';
 
 function makePlatform({ lockResult = { success: true }, transitionResult: statusResult = nestedTransitionSuccess(), shipmentResult } = {}) {
   return {
@@ -238,10 +240,10 @@ test('transitions and unlocks using only the OEIS invoice for store IDs and XML 
           identifier: SHIPMENT_ID,
           products: [],
           data_updates: {
-            products: [{ data: { store_invoice_id: OEIS_INVOICE_NUMBER } }],
+            products: [{ data: { store_invoice_id: OEIS_INVOICE_CODE } }],
             entities: [{
               data: {
-                store_invoice_id: OEIS_INVOICE_NUMBER,
+                store_invoice_id: OEIS_INVOICE_CODE,
                 meta: {
                   einvoice_info: {
                     invoice: { InvoiceNumber: OEIS_INVOICE_NUMBER, SignedQRCode: QR_CODE_DATA },
@@ -260,7 +262,7 @@ test('transitions and unlocks using only the OEIS invoice for store IDs and XML 
   expect(body.statuses[0].shipments[0].data_updates.products[0].data).not.toHaveProperty('meta');
 });
 
-test('limits only the OEIS-derived store ID to 25 characters', async () => {
+test('normalizes and limits the OEIS-derived store ID to Fynd-safe 25 characters', async () => {
   const platform = makePlatform();
   const { client } = makeClient(platform);
 
@@ -279,6 +281,11 @@ test('limits only the OEIS-derived store ID to 25 characters', async () => {
     .toBe(LONG_OEIS_INVOICE_NUMBER);
   expect(shipment.data_updates.entities[0].data.meta.xml.filename)
     .toBe(`${LONG_OEIS_INVOICE_NUMBER}.xml`);
+});
+
+test('normalizes the exact live slash-and-underscore OEIS invoice for Fynd only', () => {
+  expect(toFyndStoreInvoiceId('V_IN_1-117/2026/0000000001'))
+    .toBe('V-IN-1-117-2026-000000000');
 });
 
 test.each([
